@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8" />
-<!-- perfect-build:202611071815 -->
+<!-- perfect-build:202611072100 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
@@ -62,7 +62,7 @@
    Si la comprobación falla (sin red, fetch bloqueado), no se
    toca nada y el juego arranca igual que siempre.
    ============================================================ */
-window.PERFECT_VERSION="202611071815";
+window.PERFECT_VERSION="202611072100";
 (function(){
   "use strict";
   var VERSION=window.PERFECT_VERSION;
@@ -145,7 +145,7 @@ window.PERFECT_VERSION="202611071815";
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1/dist/peerjs.min.js"></script>
 <style>
   :root{
     --bg:#0f1e3d; --bg2:#132a55;
@@ -960,7 +960,7 @@ body{background:var(--bg)}
         <h3>Ajustes</h3>
         <div class="set-row">
           <span id="diffLabel">Dificultad de la IA (solo modo solo)</span>
-          <div class="seg" id="diffSeg" role="group" aria-labelledby="diffLabel">
+          <div class="seg diff-seg" id="diffSeg" role="group" aria-labelledby="diffLabel">
             <button type="button" data-diff="facil">Fácil</button>
             <button type="button" data-diff="normal" class="active">Normal</button>
             <button type="button" data-diff="dificil">Difícil</button>
@@ -1058,13 +1058,24 @@ body{background:var(--bg)}
 
     <!-- SOLO PANEL -->
     <div id="soloPanel">
+      <!-- v16: la dificultad se elige AQUÍ, antes de empezar (petición de Mork:
+           ya no hay que ir a buscarla a Ajustes) -->
+      <div class="set-row" style="text-align:left;margin:14px 0 4px">
+        <span id="diffLabelModal">Dificultad de la IA — elígela antes de empezar</span>
+        <div class="seg diff-seg" role="group" aria-labelledby="diffLabelModal" style="display:flex">
+          <button type="button" data-diff="facil" style="flex:1">Fácil</button>
+          <button type="button" data-diff="normal" class="active" style="flex:1">Normal</button>
+          <button type="button" data-diff="dificil" style="flex:1">Difícil</button>
+          <button type="button" data-diff="perfect" style="flex:1">Perfecta</button>
+        </div>
+        <p class="hint" id="diffHint" style="margin-top:6px">Normal: la IA encaja unas 24 piezas en 80 segundos. En Perfecta casi no falla y completa en unos 45 s.</p>
+      </div>
       <div class="rules">
         <strong>Cómo jugar</strong>
         <ul style="margin:6px 0 0;padding-left:18px">
           <li><b>Arrastra</b> la pieza roja hasta el agujero con su misma forma.</li>
           <li>En el móvil también vale: <b>toca la pieza</b> y después <b>toca el agujero</b>.</li>
           <li>Si te equivocas de agujero, la pieza rebota y vuelve a la bandeja.</li>
-          <li>Elige la dificultad en <b>Ajustes</b> (el icono de arriba): en <b>Perfecta</b> la IA casi no falla.</li>
         </ul>
       </div>
       <button class="btn btn-primary" id="btnModalStart" style="font-size:17px;padding:13px 26px;width:100%">Empezar — ¡a encajar!</button>
@@ -1097,6 +1108,7 @@ body{background:var(--bg)}
         <div id="lobbyPlayers" aria-label="Jugadores en la sala"></div>
         <div class="online-actions">
           <button class="btn btn-primary" id="btnLobbyStart" disabled style="font-size:16px;padding:12px 22px">Empezar partida</button>
+          <button class="btn btn-ghost" id="btnRetryConn" style="display:none;font-size:14px;padding:10px 18px">Reintentar conexión</button>
           <button class="btn btn-ghost" id="btnLeaveRoom">Salir de la sala</button>
         </div>
         <p style="font-size:13px;margin-top:8px" id="lobbyHint">El anfitrión (quien crea la sala) pulsa «Empezar partida» cuando ya esté dentro quien quieras — de 2 a 8 jugadores. Todos juegan el mismo tablero a la vez, cada uno con sus piezas.</p>
@@ -1145,11 +1157,13 @@ body{background:var(--bg)}
 
   // ---------- STATE ----------
   var GAME_TIME = 80; // segundos por partida (antes 60, +20 a petición de Mork)
-  var DIFFS = { // ritmos reescalados x80/60 para que la IA tarde lo mismo en completar
-    facil:   {label:"Fácil",    mean:4130, jitter:1730, failChance:0.22},
-    normal:  {label:"Normal",   mean:3130, jitter:1330, failChance:0.14},
-    dificil: {label:"Difícil",  mean:2400, jitter:1000, failChance:0.08},
-    perfect: {label:"Perfecta", mean:1890, jitter:690,  failChance:0.02}
+  var DIFFS = { // v16: la IA sube un punto de nivel en los 4 niveles (petición de Mork).
+    // Tiempo esperado por pieza = mean/(1-failChance): Fácil ~18 piezas en 80 s,
+    // Normal ~24, Difícil completa en ~59 s y Perfecta en ~45 s si no te adelantas.
+    facil:   {label:"Fácil",    mean:3700, jitter:1500, failChance:0.17},
+    normal:  {label:"Normal",   mean:3000, jitter:1150, failChance:0.11},
+    dificil: {label:"Difícil",  mean:2200, jitter:900,  failChance:0.06},
+    perfect: {label:"Perfecta", mean:1780, jitter:620,  failChance:0.015}
   };
   var diffKey="normal";
   var mode="solo"; // "solo" | "online"
@@ -1609,38 +1623,42 @@ body{background:var(--bg)}
     updateStartButton();
   }
 
-  // ---------- ONLINE: salas con código (Supabase Realtime: Presence + Broadcast, sin guardar datos) ----------
-  var SB_URL="https://zjcthmglltdrefwnflqm.supabase.co", SB_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpqY3RobWdsbHRkcmVmd25mbHFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwODA5OTMsImV4cCI6MjEwNzY1Njk5M30.hWorZSMT1C5dMVXYAaR2_fuduVwit4uJ9qrPGXcBk7o";
-  var sbClient=null;
-  function sb(){
-    if(!window.supabase||!window.supabase.createClient) return null;
-    if(!sbClient){ try{ sbClient=window.supabase.createClient(SB_URL,SB_ANON_KEY); }catch(e){ return null; } }
-    return sbClient;
-  }
-  // La librería llega por CDN: si el CDN principal falla o va lento
-  // (pasó en la práctica: la página se quedaba sin conexión online y
-  // «Crear sala» no creaba nada), se intenta una segunda fuente de la
-  // MISMA librería y se espera a que esté antes de dar un error.
-  var sbFallbackTried=false;
-  function ensureSb(cb){
+  // ---------- ONLINE: salas con código SIN SERVIDOR PROPIO ----------
+  // Petición de Mork (2026-11-07): no queda espacio para más proyectos
+  // gratuitos de Supabase y las salas fallaban (TIMED_OUT al suscribir
+  // el canal). Solución: LA SALA LA LLEVA EL ANFITRIÓN. El móvil que
+  // crea la sala es el servidor de la partida: mantiene la lista de
+  // jugadores, reparte el inicio y retransmite cada pieza colocada.
+  // Los demás móviles se conectan DIRECTAMENTE al suyo (WebRTC,
+  // vía PeerJS). El único servicio externo es el «punto de encuentro»
+  // público y gratuito de PeerJS (0.peerjs.com), que solo pone en
+  // contacto a los móviles al entrar: no guarda partidas, no necesita
+  // cuenta ni proyecto, y durante la partida los datos van de móvil
+  // a móvil sin pasar por ningún servidor. Sin Supabase.
+  function hostPeerId(code){ return "perfect-duelo-"+code.toLowerCase(); }
+  // La librería PeerJS llega por CDN: si el CDN principal falla o va
+  // lento, se intenta una segunda fuente de la MISMA librería y se
+  // espera a que esté antes de dar un error.
+  var peerFallbackTried=false;
+  function ensurePeer(cb){
     var done=false;
-    function finish(c){ if(done) return; done=true; cb(c); }
-    if(sb()){ finish(sb()); return; }
-    if(!sbFallbackTried){
-      sbFallbackTried=true;
+    function finish(ok){ if(done) return; done=true; cb(ok); }
+    if(window.Peer){ finish(true); return; }
+    if(!peerFallbackTried){
+      peerFallbackTried=true;
       try{
         var s=document.createElement("script");
-        s.src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.min.js";
-        s.onload=function(){ ensureSb(finish); };
-        s.onerror=function(){ ensureSb(finish); };
+        s.src="https://unpkg.com/peerjs@1/dist/peerjs.min.js";
+        s.onload=function(){ ensurePeer(finish); };
+        s.onerror=function(){ ensurePeer(finish); };
         document.head.appendChild(s);
       }catch(e){}
     }
     var tries=0;
     var iv=setInterval(function(){
       tries++;
-      if(sb()){ clearInterval(iv); finish(sb()); }
-      else if(tries>=40){ clearInterval(iv); finish(null); } // ~8 s esperando la librería
+      if(window.Peer){ clearInterval(iv); finish(true); }
+      else if(tries>=40){ clearInterval(iv); finish(false); } // ~8 s esperando la librería
     },200);
   }
   function homeStatus(text,kind){
@@ -1664,12 +1682,16 @@ body{background:var(--bg)}
     try{ var v=sessionStorage.getItem(ROOM_STORE_KEY); return v?JSON.parse(v):null; }catch(e){ return null; }
   }
   var Room={
-    channel:null, code:null, myId:null, amHost:false, players:0, match:0, currentMatch:0, connected:false,
-    playersMap:{}, leaderName:null,
-    retries:0, retryTimer:null, watchdog:null, joining:false, leaving:false, joinedAt:0, hostSeen:false, hadHost:false,
+    peer:null, conns:{}, hostConn:null, roster:[], code:null, myId:null, amHost:false, players:0, match:0, currentMatch:0, connected:false,
+    playersMap:{}, leaderName:null, winnerId:null,
+    retries:0, retryTimer:null, watchdog:null, joining:false, leaving:false, joinedAt:0, lastError:"",
+    // Enviar un evento de partida: el anfitrión lo reparte a todos los
+    // invitados; un invitado se lo manda al anfitrión, que lo aplica
+    // y lo retransmite a los demás.
     send:function(event,payload){
-      if(!this.channel||!this.connected) return;
-      try{ this.channel.send({type:"broadcast",event:event,payload:payload||{}}); }catch(e){}
+      var msg={type:event, payload:payload||{}};
+      if(this.amHost){ netBroadcast(msg,null); }
+      else if(this.hostConn && this.hostConn.open){ try{ this.hostConn.send(msg); }catch(e){} }
     },
     hostStart:function(){
       if(mode!=="online"||!this.amHost||playing) return;
@@ -1680,7 +1702,7 @@ body{background:var(--bg)}
       this.send("game_start",payload);
       var self=this;
       setTimeout(function(){ self.send("game_start",payload); },1000); // reenvío anti-pérdida; el receptor descarta duplicados por nº de partida
-      startOnlineMatch(this.match, seed); // el canal no devuelve tus propios mensajes: el anfitrión se aplica el inicio a sí mismo
+      startOnlineMatch(this.match, seed); // el anfitrión se aplica el inicio a sí mismo
     }
   };
   function lobbyStatus(text,kind){
@@ -1691,34 +1713,187 @@ body{background:var(--bg)}
     for(var i=0;i<4;i++) out+=chars[Math.floor(Math.random()*chars.length)];
     return out;
   }
-  // ¿Hay un anfitrión presente de verdad en el canal? Un canal de
-  // Realtime se suscribe «bien» aunque la sala no exista (es efímero:
-  // quien entra lo crea vacío), así que sin esta comprobación el
-  // invitado se quedaba esperando para siempre en una sala fantasma.
-  function hostPresent(){
-    if(!Room.channel) return false;
-    try{
-      var st=Room.channel.presenceState();
-      return Object.keys(st).some(function(k){ return (st[k]||[]).some(function(p){ return !!p.host; }); });
-    }catch(e){ return false; }
-  }
-  // Reintento de conexión: antes, un solo TIMED_OUT o CHANNEL_ERROR
-  // (nada raro en datos móviles) dejaba la sala muerta con un texto
-  // de error. Ahora se reintenta solo hasta 3 veces recreando el canal.
+  // Reintento de conexión: si la red móvil corta el contacto inicial,
+  // se vuelve a intentar solo unas veces recreando la conexión.
+  var MAX_RETRIES=4;
   function scheduleRetry(){
     if(Room.leaving||!Room.code||Room.retryTimer) return;
     Room.retries++;
-    if(Room.retries>3){
+    if(Room.retries>MAX_RETRIES){
       Room.joining=false;
-      lobbyStatus("No se ha podido conectar con la sala tras varios intentos. Revisa tu conexión, sal de la sala y vuelve a intentarlo.","err");
+      lobbyStatus("No se ha podido conectar tras "+MAX_RETRIES+" reintentos (último aviso: "+(Room.lastError||"sin respuesta")+"). Revisa tu conexión y prueba con «Reintentar conexión»; si abriste el juego desde dentro de WhatsApp, ábrelo en Safari/Chrome.","err");
+      var rb=$("btnRetryConn"); if(rb) rb.style.display="";
       return;
     }
-    lobbyStatus("Se ha cortado la conexión con la sala. Reconectando… (intento "+Room.retries+" de 3)","");
+    lobbyStatus("Conectando… intento "+(Room.retries+1)+" de "+(MAX_RETRIES+1)+".","");
     var code=Room.code, host=Room.amHost;
     Room.retryTimer=setTimeout(function(){
       Room.retryTimer=null;
       joinRoom(code, host, true); // isRetry: joinRoom conserva el nº de partida
-    }, 1600*Room.retries);
+    }, Math.min(1500*Room.retries, 6000));
+  }
+  // Vestíbulo optimista: nada más pulsar «Crear sala» / «Unirme», el
+  // jugador se ve a sí mismo en la lista («Tú · ANFITRIÓN — 1 de 8»)
+  // aunque la conexión aún se esté abriendo.
+  function renderSelfOnly(){
+    var lp=$("lobbyPlayers"); if(!lp) return;
+    lp.innerHTML="";
+    var chip=document.createElement("span");
+    chip.className="lobby-player me";
+    chip.innerHTML='<span class="pdot" style="background:#e5484d"></span><span>Tú</span>'+(Room.amHost?'<span class="host-tag">ANFITRIÓN</span>':"");
+    lp.appendChild(chip);
+    var st=$("btnLobbyStart");
+    if(st){ st.disabled=true; st.textContent= Room.amHost ? "Esperando jugadores… (1 de "+MAX_PLAYERS+")" : "El anfitrión empieza la partida"; }
+  }
+  // ---------- Red: primitivas ----------
+  function netBroadcast(msg, exceptPeerId){
+    Object.keys(Room.conns).forEach(function(pid){
+      if(pid===exceptPeerId) return;
+      var c=Room.conns[pid];
+      if(c && c.open){ try{ c.send(msg); }catch(e){} }
+    });
+  }
+  function netSendTo(peerId, msg){
+    var c=Room.conns[peerId];
+    if(c && c.open){ try{ c.send(msg); }catch(e){} }
+  }
+  function teardownPeer(){
+    Object.keys(Room.conns).forEach(function(pid){
+      try{ Room.conns[pid].close(); }catch(e){}
+    });
+    Room.conns={};
+    if(Room.hostConn){ try{ Room.hostConn.close(); }catch(e){} Room.hostConn=null; }
+    if(Room.peer){ try{ Room.peer.destroy(); }catch(e){} Room.peer=null; }
+    Room.connected=false;
+  }
+  // La lista de jugadores (roster) la manda el anfitrión y es la misma
+  // para todos: [{id, host}]. De su orden salen el nombre (Jugador N)
+  // y el color de cada uno, igual en todos los móviles.
+  function applyRoster(list){
+    if(!list||!list.length) return;
+    Room.roster=list.slice(0,MAX_PLAYERS);
+    Room.players=Room.roster.length;
+    var oldMap=Room.playersMap, newMap={}, rivalIdx=0;
+    Room.roster.forEach(function(entry,i){
+      if(entry.id===Room.myId) return;
+      var prev=oldMap[entry.id];
+      newMap[entry.id]={ name:"Jugador "+(i+1), color:RIVAL_COLORS[rivalIdx%RIVAL_COLORS.length], count:prev?prev.count:0 };
+      rivalIdx++;
+    });
+    var rosterChanged=(Object.keys(newMap).length!==Object.keys(oldMap).length) ||
+      Object.keys(newMap).some(function(k){ return !oldMap[k]; });
+    Room.playersMap=newMap;
+    refreshLeader();
+    var lp=$("lobbyPlayers");
+    if(lp){
+      lp.innerHTML="";
+      Room.roster.forEach(function(entry,i){
+        var chip=document.createElement("span");
+        chip.className="lobby-player"+(entry.id===Room.myId?" me":"");
+        var color= entry.id===Room.myId ? "#e5484d" : (newMap[entry.id]?newMap[entry.id].color:"#999");
+        chip.innerHTML='<span class="pdot" style="background:'+color+'"></span><span>'+(entry.id===Room.myId?"Tú":"Jugador "+(i+1))+'</span>'+(entry.host?'<span class="host-tag">ANFITRIÓN</span>':"");
+        lp.appendChild(chip);
+      });
+    }
+    if(Room.players>=2){
+      lobbyStatus(Room.amHost ? "Sois "+Room.players+" de "+MAX_PLAYERS+" en la sala. Cuando quieras, pulsa «Empezar partida»." : "¡Estás dentro! Sois "+Room.players+" de "+MAX_PLAYERS+". El anfitrión lanzará la partida.","ok");
+    } else if(Room.amHost){
+      lobbyStatus("Sala creada (1 de "+MAX_PLAYERS+"). Tu móvil es el servidor de esta sala: déjalo con el juego abierto mientras jugáis. Pásales el código "+Room.code+" — por WhatsApp con el botón verde.","");
+    } else {
+      lobbyStatus("Estás dentro de la sala. Esperando a que el anfitrión empiece…","");
+    }
+    $("btnLobbyStart").disabled = !(Room.amHost && Room.players>=2) || playing;
+    $("btnLobbyStart").textContent = Room.amHost ? (Room.players>=2 ? "Empezar partida ("+Room.players+" jugadores)" : "Esperando jugadores… ("+Room.players+" de "+MAX_PLAYERS+")") : "El anfitrión empieza la partida";
+    if(rosterChanged && !playing && !finished){ buildRivalBoards(); }
+    if(playing) renderRanking();
+    updateStartButton();
+  }
+  function hostBroadcastRoster(){
+    netBroadcast({type:"roster", payload:{players:Room.roster}}, null);
+  }
+  // Un «finish» (de un rival, retransmitido o directo): su tablero se
+  // rellena hasta su marca final y, si completó o se acabó el tiempo,
+  // la partida termina también aquí.
+  function handleRemoteFinish(p){
+    if(p.from && typeof p.count==="number"){
+      syncRivalBoard(p.from, p.count); refreshLeader(); updateHUD();
+    }
+    if(finished) return;
+    if(p.complete){
+      Room.winnerId=p.from||null;
+      endGame("aiComplete");
+    }
+    else { endGame("time"); }
+  }
+  // ---------- Anfitrión: recibe a los invitados y lleva la sala ----------
+  function hostAddGuest(peerId){
+    if(Room.roster.some(function(e){ return e.id===peerId; })) return true;
+    if(Room.roster.length>=MAX_PLAYERS) return false;
+    Room.roster.push({id:peerId, host:false});
+    return true;
+  }
+  function hostRemoveGuest(peerId){
+    if(!Room.amHost) return;
+    delete Room.conns[peerId];
+    var before=Room.roster.length;
+    Room.roster=Room.roster.filter(function(e){ return e.id!==peerId; });
+    if(Room.roster.length!==before){
+      applyRoster(Room.roster);
+      hostBroadcastRoster();
+      if(playing&&mode==="online") $("aiMsg").textContent="Un jugador se ha desconectado de la sala. La partida sigue con los demás.";
+    }
+  }
+  function hostOnConnection(conn){
+    Room.conns[conn.peer]=conn;
+    conn.on("data",function(msg){
+      if(!msg||!msg.type) return;
+      var p=msg.payload||{};
+      if(msg.type==="join"){
+        if(!hostAddGuest(conn.peer)){
+          try{ conn.send({type:"full", payload:{}}); }catch(e){}
+          setTimeout(function(){ try{ conn.close(); }catch(e){} },600);
+          return;
+        }
+        try{ conn.send({type:"welcome", payload:{you:conn.peer}}); }catch(e){}
+        applyRoster(Room.roster);
+        hostBroadcastRoster();
+        netSendTo(conn.peer,{type:"roster", payload:{players:Room.roster}});
+      }
+      else if(msg.type==="place"){
+        if(typeof p.shape==="number") rivalPlaced(p.from, p.shape, p.count);
+        netBroadcast({type:"place", payload:p}, conn.peer); // retransmite a los demás invitados
+      }
+      else if(msg.type==="finish"){
+        handleRemoteFinish(p);
+        netBroadcast({type:"finish", payload:p}, conn.peer);
+      }
+    });
+    conn.on("close",function(){ hostRemoveGuest(conn.peer); });
+    if(conn.on) conn.on("error",function(){ hostRemoveGuest(conn.peer); });
+  }
+  // ---------- Invitado: recibe órdenes y resultados del anfitrión ----------
+  function guestOnData(msg){
+    if(!msg||!msg.type) return;
+    var p=msg.payload||{};
+    if(msg.type==="roster"){
+      if(Room.watchdog){ clearTimeout(Room.watchdog); Room.watchdog=null; }
+      applyRoster(p.players||[]);
+    }
+    else if(msg.type==="game_start"){
+      if(!p.match||p.match===Room.currentMatch) return; // duplicado del reenvío
+      startOnlineMatch(p.match, p.seed);
+    }
+    else if(msg.type==="place"){
+      if(typeof p.shape==="number") rivalPlaced(p.from, p.shape, p.count);
+    }
+    else if(msg.type==="finish"){
+      handleRemoteFinish(p);
+    }
+    else if(msg.type==="full"){
+      Room.leaving=true;
+      lobbyStatus("Esta sala ya está llena: hay "+MAX_PLAYERS+" jugadores dentro. Que el anfitrión cree otra sala con otro código.","err");
+      teardownPeer(); Room.connected=false;
+    }
   }
   function joinRoom(code, asHost, isRetry){
     if(Room.joining) return;
@@ -1729,8 +1904,8 @@ body{background:var(--bg)}
     lobbyShow();
     $("roomCodeBig").textContent=code;
     lobbyStatus(isRetry ? "Reconectando con la sala "+code+"…" : "Conectando con la sala "+code+"…","");
-    ensureSb(function(client){
-      if(!client){
+    ensurePeer(function(ok){
+      if(!ok){
         Room.joining=false;
         $("lobbyHome").style.display="block"; $("lobbyRoom").style.display="none";
         homeStatus("No se ha podido cargar la conexión online (la librería de red no ha llegado). Revisa tu internet y vuelve a intentarlo.","err");
@@ -1739,158 +1914,126 @@ body{background:var(--bg)}
       if(Room.leaving){ Room.joining=false; return; } // el usuario salió mientras cargaba
       leaveRoom(true);
       Room.code=code; Room.amHost=asHost; Room.connected=false;
-      if(!isRetry){ Room.match=0; Room.currentMatch=0; Room.hadHost=false; } // al reconectar se conserva la numeración: si volviera a 1, los invitados descartarían el siguiente inicio como duplicado
-      Room.playersMap={}; Room.leaderName=null; Room.winnerId=null; Room.hostSeen=false;
+      if(!isRetry){ Room.match=0; Room.currentMatch=0; } // al reconectar se conserva la numeración: si volviera a 1, los invitados descartarían el siguiente inicio como duplicado
+      Room.playersMap={}; Room.leaderName=null; Room.winnerId=null; Room.roster=[];
       Room.joinedAt=Date.now();
-      Room.myId="p"+Math.random().toString(36).slice(2,10);
       lobbyShow();
       $("roomCodeBig").textContent=code;
       storeRoom();
+      renderSelfOnly(); // te ves dentro de la sala desde el primer segundo
+      var rb0=$("btnRetryConn"); if(rb0) rb0.style.display="none";
       // Botón de WhatsApp: lleva el código y los pasos, sin enlaces raros
       var waText="¡Te reto a Perfect! Abre el juego, elige «Online · hasta 8», pulsa «Unirme a la sala» y escribe este código: "+code+" — cabemos hasta 8 jugadores.";
       $("btnWhats").href="https://wa.me/?text="+encodeURIComponent(waText);
-      lobbyStatus(isRetry ? "Reconectando con la sala "+code+"…" : "Conectando con la sala "+code+"…","");
-      var ch=client.channel("perfect-"+code.toLowerCase(),{config:{broadcast:{self:false},presence:{key:Room.myId}}});
-      Room.channel=ch;
-      ch.on("presence",{event:"sync"},function(){ if(ch===Room.channel) syncLobby(); });
-      ch.on("presence",{event:"leave"},function(){
-        if(playing&&mode==="online") $("aiMsg").textContent="Un jugador se ha desconectado de la sala.";
-      });
-      ch.on("broadcast",{event:"game_start"},function(msg){
-        var p=msg.payload||{};
-        if(!p.match||p.match===Room.currentMatch) return; // duplicado del reenvío
-        if(Room.amHost) return; // el anfitrión ya se aplicó su propio inicio
-        startOnlineMatch(p.match, p.seed);
-      });
-      ch.on("broadcast",{event:"place"},function(msg){
-        var p=msg.payload||{};
-        if(typeof p.shape==="number") rivalPlaced(p.from, p.shape, p.count);
-      });
-      ch.on("broadcast",{event:"hello"},function(){
-        // Alguien acaba de entrar: el anfitrión se anuncia y refresca
-        // su presencia para que el recién llegado vea la sala al momento.
-        if(Room.amHost && Room.connected){
-          try{ ch.track({id:Room.myId, host:true, joinedAt:Room.joinedAt}); }catch(e){}
-          Room.send("room_ping",{from:Room.myId, host:true});
-        }
-      });
-      ch.on("broadcast",{event:"room_ping"},function(msg){
-        var p=msg.payload||{};
-        if(p.host) Room.hostSeen=true;
-      });
-      ch.on("broadcast",{event:"finish"},function(msg){
-        var p=msg.payload||{};
-        if(p.from && typeof p.count==="number"){
-          // Rellena el mini-tablero de ese jugador hasta su marca final si algún «place» se perdió
-          syncRivalBoard(p.from, p.count); refreshLeader(); updateHUD();
-        }
-        if(finished) return;
-        if(p.complete){
-          Room.winnerId=p.from||null;
-          endGame("aiComplete");
-        }
-        else { endGame("time"); }
-      });
-      ch.subscribe(function(status){
-        if(ch!==Room.channel) return; // aviso de un canal ya sustituido: se ignora
-        if(status==="SUBSCRIBED"){
-          Room.connected=true; Room.joining=false; Room.retries=0;
-          ch.track({id:Room.myId, host:Room.amHost, joinedAt:Room.joinedAt});
-          syncLobby();
-          if(!Room.amHost){
-            // El invitado se anuncia y verifica que la sala EXISTE:
-            // si en unos segundos no aparece ningún anfitrión (ni en
-            // presencia ni respondiendo), avisa de que ese código no
-            // tiene sala en vez de dejarle esperando sin explicación.
-            Room.send("hello",{from:Room.myId});
-            if(Room.watchdog) clearTimeout(Room.watchdog);
-            Room.watchdog=setTimeout(function(){
-              Room.watchdog=null;
-              if(!Room.code||Room.amHost||playing) return;
-              if(!hostPresent() && !Room.hostSeen){
-                lobbyStatus("No se encuentra ninguna sala con el código "+Room.code+". Comprueba que el anfitrión la ha creado ya y que el código coincide letra a letra; si la crea ahora, aparecerás dentro en cuanto entre.","err");
-              }
-            },7000);
-          }
-        } else if(status==="CHANNEL_ERROR"||status==="TIMED_OUT"||status==="CLOSED"){
-          Room.connected=false; Room.joining=false;
-          scheduleRetry();
-        }
-      });
+      lobbyStatus(isRetry ? "Reconectando con la sala "+code+"…" : (asHost ? "Creando tu sala "+code+"…" : "Buscando la sala "+code+"…"),"");
+      if(asHost) createHostPeer(code);
+      else createGuestPeer(code);
     });
   }
-  function syncLobby(){
-    if(!Room.channel) return;
-    var state=Room.channel.presenceState();
-    // Orden estable de claves: el mismo en todos los móviles, así cada
-    // jugador recibe el mismo nombre (Jugador N) y el mismo color.
-    var keys=Object.keys(state).sort();
-    var count=keys.length, hostThere=false, earliest=null;
-    keys.forEach(function(k){
-      state[k].forEach(function(p){
-        if(p.host) hostThere=true;
-        if(!earliest || (p.joinedAt||0)<(earliest.joinedAt||0)) earliest=p;
+  function createHostPeer(code){
+    var peer;
+    try{ peer=new window.Peer(hostPeerId(code)); }
+    catch(e){ Room.joining=false; scheduleRetry(); return; }
+    Room.peer=peer;
+    peer.on("open",function(id){
+      if(peer!==Room.peer) return;
+      Room.myId=id; Room.connected=true; Room.joining=false; Room.retries=0;
+      var rb1=$("btnRetryConn"); if(rb1) rb1.style.display="none";
+      Room.roster=[{id:id, host:true}];
+      applyRoster(Room.roster);
+    });
+    peer.on("connection",function(conn){
+      if(peer!==Room.peer) return;
+      // La conexión puede tardar un instante en abrirse: se atiende
+      // al abrir, que es cuando el invitado manda su «join».
+      if(conn.open){ hostOnConnection(conn); }
+      else conn.on("open",function(){ if(peer===Room.peer) hostOnConnection(conn); });
+    });
+    peer.on("error",function(err){
+      if(peer!==Room.peer) return;
+      var type=(err&&err.type)||"";
+      Room.lastError=type||"error de red";
+      if(type==="unavailable-id"){
+        // Ese código ya lo tiene otra sala abierta: se genera otro
+        // código y se crea la sala con él, sin molestar al anfitrión.
+        var newCode=genCode();
+        Room.code=newCode;
+        $("roomCodeBig").textContent=newCode;
+        storeRoom();
+        var waText2="¡Te reto a Perfect! Abre el juego, elige «Online · hasta 8», pulsa «Unirme a la sala» y escribe este código: "+newCode+" — cabemos hasta 8 jugadores.";
+        $("btnWhats").href="https://wa.me/?text="+encodeURIComponent(waText2);
+        teardownPeer();
+        createHostPeer(newCode);
+        return;
+      }
+      Room.joining=false; Room.connected=false;
+      scheduleRetry();
+    });
+    peer.on("disconnected",function(){
+      if(peer!==Room.peer) return;
+      try{ peer.reconnect(); }catch(e){}
+    });
+  }
+  function createGuestPeer(code){
+    var peer;
+    try{ peer=new window.Peer(); }
+    catch(e){ Room.joining=false; scheduleRetry(); return; }
+    Room.peer=peer;
+    peer.on("open",function(id){
+      if(peer!==Room.peer) return;
+      Room.myId=id;
+      var conn;
+      try{ conn=peer.connect(hostPeerId(code),{reliable:true}); }
+      catch(e){ Room.joining=false; scheduleRetry(); return; }
+      Room.hostConn=conn;
+      // Si la sala no existe, la conexión nunca se abre: aviso claro
+      // en vez de quedarse esperando en un canal vacío.
+      if(Room.watchdog) clearTimeout(Room.watchdog);
+      Room.watchdog=setTimeout(function(){
+        Room.watchdog=null;
+        if(!Room.code||Room.amHost||Room.connected) return;
+        Room.joining=false;
+        lobbyStatus("No se encuentra ninguna sala con el código "+Room.code+". Comprueba que el anfitrión la ha creado ya (su móvil hace de servidor: tiene que tener el juego abierto en la sala) y que el código coincide letra a letra.","err");
+        var rb=$("btnRetryConn"); if(rb) rb.style.display="";
+      },10000);
+      conn.on("open",function(){
+        if(peer!==Room.peer) return;
+        Room.connected=true; Room.joining=false; Room.retries=0;
+        var rb2=$("btnRetryConn"); if(rb2) rb2.style.display="none";
+        try{ conn.send({type:"join", payload:{}}); }catch(e){}
+        lobbyStatus("Conectado con el anfitrión. Esperando la lista de jugadores…","");
+      });
+      conn.on("data",function(msg){ if(peer===Room.peer) guestOnData(msg); });
+      conn.on("close",function(){
+        if(peer!==Room.peer||Room.leaving) return;
+        Room.connected=false;
+        if(playing){ $("aiMsg").textContent="Se ha perdido la conexión con el anfitrión."; }
+        lobbyStatus("Se ha cortado la conexión con el anfitrión (si cierra el juego, la sala se cierra). Reintentando…","");
+        scheduleRetry();
+      });
+      if(conn.on) conn.on("error",function(){
+        if(peer!==Room.peer||Room.leaving) return;
+        Room.connected=false; scheduleRetry();
       });
     });
-    // Sala llena: si mi posición en el orden pasa de 8, no entro
-    var myIndex=keys.indexOf(Room.myId);
-    if(myIndex>=MAX_PLAYERS){
-      lobbyStatus("Esta sala ya está llena: hay "+MAX_PLAYERS+" jugadores dentro. Crea otra sala con otro código.","err");
-      $("btnLobbyStart").disabled=true;
-      return;
-    }
-    // Relevo de anfitrión: si quien creó la sala se va, pasa a serlo
-    // el jugador que entró antes, para que la sala no quede muerta.
-    // OJO: solo si esta sala TUVO anfitrión de verdad (hadHost). Sin
-    // esa condición, un invitado que entraba a un código sin sala se
-    // «promocionaba» a sí mismo a anfitrión estando solo en un canal
-    // vacío y veía «Sala creada»: una sala fantasma que nunca existió.
-    if(hostThere) Room.hadHost=true;
-    if(!hostThere && Room.hadHost && earliest && earliest.id===Room.myId && !Room.amHost){
-      Room.amHost=true;
-      try{ Room.channel.track({id:Room.myId, host:true, joinedAt:earliest.joinedAt||Date.now()}); }catch(e){}
-      hostThere=true;
-    }
-    var was=Room.players; Room.players=Math.min(count,MAX_PLAYERS);
-    keys=keys.slice(0,MAX_PLAYERS); // los que pasen de 8 no cuentan como jugadores
-    // Reconstruye el mapa de rivales conservando sus piezas de la partida en curso
-    var oldMap=Room.playersMap, newMap={}, rivalIdx=0;
-    keys.forEach(function(k,i){
-      if(k===Room.myId) return;
-      var prev=oldMap[k];
-      newMap[k]={ name:"Jugador "+(i+1), color:RIVAL_COLORS[rivalIdx%RIVAL_COLORS.length], count:prev?prev.count:0 };
-      rivalIdx++;
+    peer.on("error",function(err){
+      if(peer!==Room.peer) return;
+      var type=(err&&err.type)||"";
+      Room.lastError=type||"error de red";
+      if(type==="peer-unavailable"){
+        if(Room.watchdog){ clearTimeout(Room.watchdog); Room.watchdog=null; }
+        Room.joining=false;
+        lobbyStatus("No se encuentra ninguna sala con el código "+Room.code+". Comprueba que el anfitrión la ha creado ya (su móvil hace de servidor: tiene que tener el juego abierto en la sala) y que el código coincide letra a letra.","err");
+        var rb3=$("btnRetryConn"); if(rb3) rb3.style.display="";
+        return;
+      }
+      Room.joining=false; Room.connected=false;
+      scheduleRetry();
     });
-    var rosterChanged=(Object.keys(newMap).length!==Object.keys(oldMap).length) ||
-      Object.keys(newMap).some(function(k){ return !oldMap[k]; });
-    Room.playersMap=newMap;
-    refreshLeader();
-    // Lista de jugadores del vestíbulo (n/8)
-    var lp=$("lobbyPlayers");
-    if(lp){
-      lp.innerHTML="";
-      keys.slice(0,MAX_PLAYERS).forEach(function(k,i){
-        var meta=(state[k]&&state[k][0])||{};
-        var chip=document.createElement("span");
-        chip.className="lobby-player"+(k===Room.myId?" me":"");
-        var color= k===Room.myId ? "#e5484d" : (newMap[k]?newMap[k].color:"#999");
-        chip.innerHTML='<span class="pdot" style="background:'+color+'"></span><span>'+(k===Room.myId?"Tú":"Jugador "+(i+1))+'</span>'+(meta.host?'<span class="host-tag">ANFITRIÓN</span>':"");
-        lp.appendChild(chip);
-      });
-    }
-    if(Room.players>=2){
-      lobbyStatus(Room.amHost ? "Sois "+Room.players+" de "+MAX_PLAYERS+" en la sala. Cuando quieras, pulsa «Empezar partida»." : "¡Estás dentro! Sois "+Room.players+" de "+MAX_PLAYERS+". El anfitrión lanzará la partida.","ok");
-    } else if(Room.amHost){
-      lobbyStatus("Sala creada (1 de "+MAX_PLAYERS+"). Esperando a tus amigos… Pásales el código "+Room.code+" — por WhatsApp con el botón verde.","");
-    } else {
-      lobbyStatus(hostThere ? "Conectado. Esperando a que el anfitrión empiece…" : "Estás en la sala, pero el anfitrión no aparece. Comprueba que el código es el suyo.","");
-    }
-    $("btnLobbyStart").disabled = !(Room.amHost && Room.players>=2) || playing;
-    $("btnLobbyStart").textContent = Room.amHost ? (Room.players>=2 ? "Empezar partida ("+Room.players+" jugadores)" : "Esperando jugadores…") : "El anfitrión empieza la partida";
-    if(was>count && playing){ $("aiMsg").textContent="Un jugador ha salido de la sala a mitad de partida. La partida sigue con los demás."; }
-    if(rosterChanged && !playing && !finished){ buildRivalBoards(); }
-    if(playing) renderRanking();
-    updateStartButton();
+    peer.on("disconnected",function(){
+      if(peer!==Room.peer) return;
+      try{ peer.reconnect(); }catch(e){}
+    });
   }
   function lobbyShow(){
     $("lobbyHome").style.display="none"; $("lobbyRoom").style.display="block";
@@ -1899,12 +2042,9 @@ body{background:var(--bg)}
     if(!silent){ Room.leaving=true; } // salida pedida por el usuario: no reconectar
     if(Room.retryTimer){ clearTimeout(Room.retryTimer); Room.retryTimer=null; }
     if(Room.watchdog){ clearTimeout(Room.watchdog); Room.watchdog=null; }
-    if(Room.channel){
-      try{ Room.channel.untrack(); }catch(e){}
-      if(sbClient){ try{ sbClient.removeChannel(Room.channel); }catch(e){} }
-    }
-    Room.channel=null; Room.code=null; Room.players=0; Room.connected=false; Room.amHost=false; Room.currentMatch=0;
-    Room.playersMap={}; Room.leaderName=null; Room.winnerId=null; Room.hostSeen=false; Room.joining=false;
+    teardownPeer();
+    Room.code=null; Room.players=0; Room.connected=false; Room.amHost=false; Room.currentMatch=0; Room.roster=[];
+    Room.playersMap={}; Room.leaderName=null; Room.winnerId=null; Room.joining=false;
     if(!silent){ try{ sessionStorage.removeItem(ROOM_STORE_KEY); }catch(e){} }
     var lpEl=$("lobbyPlayers"); if(lpEl) lpEl.innerHTML="";
     if(!silent){
@@ -1913,17 +2053,11 @@ body{background:var(--bg)}
       updateStartButton();
     }
   }
-  // Latido de presencia: cada 15 s quien está en una sala reafirma su
-  // presencia, para que un corte breve de red no le haga «desaparecer»
-  // de la lista de los demás.
-  setInterval(function(){
-    if(Room.channel && Room.connected && Room.code){
-      try{ Room.channel.track({id:Room.myId, host:Room.amHost, joinedAt:Room.joinedAt}); }catch(e){}
-    }
-  },15000);
   // Al volver a la app (p. ej. tras compartir el código por WhatsApp),
-  // iOS/Android pueden haber cortado el socket: si estamos en una sala
-  // y la conexión cayó, se vuelve a entrar solo a la misma sala.
+  // iOS/Android pueden haber cortado la conexión: si estamos en una
+  // sala y la conexión cayó, se vuelve a entrar solo a la misma sala.
+  // OJO: si eres el anfitrión y tu conexión renace, la sala renace
+  // contigo (tu móvil es el servidor); los invitados se reconectan.
   document.addEventListener("visibilitychange",function(){
     if(document.hidden) return;
     if(mode==="online" && Room.code && !Room.connected && !Room.joining && !Room.leaving){
@@ -1976,12 +2110,24 @@ body{background:var(--bg)}
   $("btnModalStart").addEventListener("click",startGame);
   $("btnReset").addEventListener("click",function(){ $("overlay").classList.remove("show"); resetGame(null); });
   $("btnSound").addEventListener("click",function(){ soundOn=!soundOn; document.getElementById("soundLabel").textContent=soundOn?"Sonido":"Silencio"; this.querySelectorAll(".snd-waves").forEach(function(w){ w.style.opacity=soundOn?"1":"0.25"; }); this.setAttribute("aria-label",soundOn?"Sonido activado":"Sonido desactivado"); if(soundOn) beep(700,0.07,"triangle",0.1); });
-  document.querySelectorAll("#diffSeg button").forEach(function(b){
-    b.addEventListener("click",function(){
-      document.querySelectorAll("#diffSeg button").forEach(function(x){x.classList.remove("active");});
-      b.classList.add("active"); diffKey=b.dataset.diff; applyModeLabels();
-      if(!playing&&mode==="solo") $("aiMsg").textContent="Dificultad de la IA: "+DIFFS[diffKey].label+". Pulsa «Empezar partida».";
-    });
+  // v16: UN solo control de dificultad con dos caras (la pantalla de
+  // inicio y Ajustes) siempre sincronizadas.
+  var DIFF_HINTS={
+    facil:"Fácil: la IA encaja unas 18 piezas en 80 segundos. Para calentar.",
+    normal:"Normal: la IA encaja unas 24 piezas en 80 segundos. El duelo de siempre, un punto más exigente.",
+    dificil:"Difícil: la IA completa las 25 en unos 59 segundos si no te adelantas tú.",
+    perfect:"Perfecta: la IA casi no falla y completa en unos 45 segundos. Solo para muy rápidos."
+  };
+  function setDiff(key){
+    if(!DIFFS[key]) return;
+    diffKey=key;
+    document.querySelectorAll(".diff-seg button").forEach(function(x){ x.classList.toggle("active", x.dataset.diff===key); });
+    var hint=$("diffHint"); if(hint) hint.textContent=DIFF_HINTS[key];
+    applyModeLabels();
+    if(!playing&&mode==="solo") $("aiMsg").textContent="Dificultad de la IA: "+DIFFS[key].label+". Pulsa «Empezar — ¡a encajar!».";
+  }
+  document.querySelectorAll(".diff-seg button").forEach(function(b){
+    b.addEventListener("click",function(){ setDiff(b.dataset.diff); });
   });
   document.querySelectorAll("#modeSeg button").forEach(function(b){
     b.addEventListener("click",function(){ setMode(b.dataset.mode); });
@@ -1999,6 +2145,13 @@ body{background:var(--bg)}
     if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(code).then(done,done); } else { done(); }
   });
   $("btnLobbyStart").addEventListener("click",function(){ Room.hostStart(); });
+  $("btnRetryConn").addEventListener("click",function(){
+    if(!Room.code) return;
+    this.style.display="none";
+    Room.retries=0; Room.lastStatus="";
+    lobbyStatus("Reconectando con la sala "+Room.code+"…","");
+    joinRoom(Room.code, Room.amHost, true);
+  });
   $("btnLeaveRoom").addEventListener("click",function(){ leaveRoom(false); });
   $("btnRejoin").addEventListener("click",function(){
     var saved=storedRoom();
