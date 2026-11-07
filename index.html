@@ -1,0 +1,1724 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f2f3f5" />
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0c0d10" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<link rel="icon" href="data:," />
+<title>Perfect — Tú contra la IA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+  :root{
+    --bg:#0f1e3d; --bg2:#132a55;
+    --panel:#ffffff; --panel2:#eef3ff;
+    --ink:#101a33; --muted:#5b6b8f;
+    --board:#1d4ed8; --board-dark:#173a9e; --board-edge:#0f2a73;
+    --hole:#0b1e4b; --hole-inner:#081638;
+    --player:#e8322a; --player-dark:#b91f18; --player-light:#ff6b5e;
+    --ai:#f5b800; --ai-dark:#c78f00; --ai-light:#ffd84d;
+    --good:#16a34a; --track:#dbe4f5;
+    --radius:18px;
+    --shadow:0 10px 30px rgba(2,8,30,.35);
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#dbe7ff; --bg2:#c7dbff; --panel:#ffffff; --panel2:#eef3ff; --ink:#101a33; --muted:#5b6b8f; --shadow:0 10px 30px rgba(30,60,140,.18); }
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0;overscroll-behavior:none}
+  body{
+    font-family:"Nunito",system-ui,sans-serif; color:var(--ink);
+    background:
+      radial-gradient(900px 500px at 15% -10%, rgba(245,184,0,.28), transparent 60%),
+      radial-gradient(900px 600px at 95% 0%, rgba(232,50,42,.22), transparent 55%),
+      linear-gradient(180deg,var(--bg),var(--bg2));
+    min-height:100vh; min-height:100dvh; padding:8px 10px 10px; display:flex; flex-direction:column;
+    touch-action:manipulation;
+  }
+  @media (prefers-color-scheme: light){ body{color:var(--ink)} .top-title{color:#0f1e3d!important} .top-sub{color:#39507f!important} }
+  .wrap{max-width:1160px;margin:0 auto;width:100%;flex:1;display:flex;flex-direction:column;min-height:0}
+  /* Header — one slim line: title left, start + settings right */
+  .top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 6px}
+  .top-title{font-family:"Baloo 2",sans-serif;font-size:clamp(24px,3.4vw,32px);line-height:.9;font-weight:800;color:#fff;letter-spacing:.5px;margin:0}
+  .top-title span{color:var(--ai)}
+  .top-sub{color:#bcd0ff;font-weight:800;margin:2px 0 0;font-size:12px}
+  .top-actions{display:flex;align-items:center;gap:8px;position:relative;flex:0 0 auto}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--player);flex:0 0 auto} .dot.y{background:var(--ai)}
+  /* HUD — a single slim score strip, not three big cards */
+  .hud{display:flex;align-items:center;gap:10px;background:var(--panel);border-radius:999px;padding:4px 14px;box-shadow:0 4px 14px rgba(2,8,30,.22);margin-bottom:8px;color:var(--ink)}
+  .hud-side{display:flex;align-items:center;gap:6px;min-width:0;flex:1}
+  .hud-side.ai{justify-content:flex-end}
+  .hud-who{font-weight:900;font-size:11px;letter-spacing:.07em;color:var(--muted);white-space:nowrap}
+  .hud-num{font-family:"Baloo 2";font-size:19px;line-height:1;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .hud-num small{font-size:12px;color:var(--muted);font-weight:800}
+  .mini-progress{height:5px;background:var(--track);border-radius:99px;overflow:hidden;width:64px;max-width:14vw;flex:0 1 auto}
+  .mini-progress i{display:block;height:100%;width:0%;transition:width .35s ease}
+  .mini-progress.p i{background:var(--player)} .mini-progress.a i{background:var(--ai)}
+  .hud-timer{display:flex;align-items:center;gap:7px;background:#0a1736;color:#fff;border-radius:999px;padding:2px 12px 3px;flex:0 0 auto}
+  .timer-num{font-family:"Baloo 2";font-size:21px;line-height:1.15;font-weight:800;font-variant-numeric:tabular-nums}
+  .timer-num.danger{color:#ff5a4e;animation:pulse .5s infinite alternate}
+  @keyframes pulse{from{transform:scale(1)}to{transform:scale(1.07)}}
+  .timer-unit{font-size:10px;font-weight:900;color:#9db4e8}
+  .timer-bar{height:4px;background:rgba(255,255,255,.2);border-radius:99px;overflow:hidden;width:52px}
+  .timer-bar i{display:block;height:100%;background:var(--ai);width:100%}
+  /* Buttons */
+  .seg{display:flex;background:var(--panel2);border-radius:999px;padding:3px;gap:3px;flex-wrap:wrap}
+  .seg button{border:0;background:transparent;padding:6px 11px;border-radius:999px;font-family:inherit;font-weight:900;cursor:pointer;color:#33436b;font-size:13px}
+  .seg button.active{background:#101a33;color:#fff}
+  @media (prefers-color-scheme: dark){ .seg button{color:#c6d3f2} .seg button.active{background:#fff;color:#101a33} }
+  .btn{border:0;cursor:pointer;font-family:inherit;font-weight:900;border-radius:999px;padding:9px 16px;font-size:14.5px;box-shadow:var(--shadow);white-space:nowrap}
+  .btn-primary{background:var(--player);color:#fff} .btn-primary:active{transform:scale(.97)}
+  .btn-ghost{background:var(--panel2);color:var(--ink);box-shadow:none}
+  .btn:disabled{opacity:.55;cursor:not-allowed}
+  .hint{color:var(--muted);font-size:12.5px;font-weight:700;margin:0;line-height:1.45}
+  /* Settings (gear) button + floating panel */
+  .gear-btn{width:40px;height:40px;border-radius:50%;border:0;background:#fff;color:#101a33;display:grid;place-items:center;cursor:pointer;box-shadow:var(--shadow);flex:0 0 auto;padding:0}
+  .gear-btn svg{width:21px;height:21px}
+  .gear-btn:active{transform:scale(.95)}
+  .gear-btn.open{background:var(--ai);color:#231a00}
+  .settings-panel{display:none;position:absolute;right:0;top:calc(100% + 8px);width:min(400px,calc(100vw - 20px));background:var(--panel);color:var(--ink);border-radius:16px;box-shadow:0 18px 44px rgba(2,8,30,.4);padding:14px;z-index:75;text-align:left}
+  .settings-panel.show{display:block}
+  .settings-panel h3{font-family:"Baloo 2";margin:0 0 8px;font-size:17px}
+  .set-row{margin:0 0 12px}
+  .set-row>span{display:block;font-weight:900;font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
+  .set-row .btn{box-shadow:none;font-size:13.5px;padding:8px 13px}
+  .set-actions{display:flex;gap:7px;flex-wrap:wrap}
+  .settings-panel .hint{margin-top:2px}
+  /* Layout */
+  .layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:12px;align-items:start;flex:1;min-height:0}
+  .card{background:var(--panel);border-radius:18px;padding:12px;box-shadow:var(--shadow)}
+  .card h2{font-family:"Baloo 2";margin:0 0 2px;font-size:18px}
+  .card p.sub{margin:0 0 8px;color:var(--muted);font-weight:700;font-size:13px}
+  /* Board + tray side by side so both are always on screen together. */
+  .play-zone{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+  .play-zone .board,.play-zone .tray{width:min(100%,calc(100vh - 215px));width:min(100%,calc(100dvh - 215px));justify-self:center}
+  /* Board — touch-action:none so a drag never pans or scrolls the page */
+  .board{
+    background:linear-gradient(180deg,#2563eb,var(--board) 55%,var(--board-dark));
+    border:4px solid var(--board-edge); border-radius:18px; padding:12px;
+    display:grid;grid-template-columns:repeat(5,1fr);gap:9px; position:relative;
+    box-shadow:inset 0 3px 0 rgba(255,255,255,.25), inset 0 -8px 18px rgba(0,0,0,.25);
+    touch-action:none;
+  }
+  .board.shake{animation:shake .5s ease}
+  @keyframes shake{0%,100%{transform:translate(0)}15%{transform:translate(-7px,3px) rotate(-.6deg)}30%{transform:translate(7px,-4px) rotate(.6deg)}45%{transform:translate(-6px,-3px)}60%{transform:translate(6px,4px)}80%{transform:translate(-3px,2px)}}
+  .slot{
+    aspect-ratio:1/1;background:var(--hole);border-radius:12px;position:relative;
+    box-shadow:inset 0 4px 10px rgba(0,0,0,.75), inset 0 -2px 0 rgba(255,255,255,.08);
+    display:grid;place-items:center;overflow:visible;touch-action:none;
+  }
+  .slot svg.hole-shape{width:72%;height:72%;color:#020a24;filter:drop-shadow(0 1px 0 rgba(255,255,255,.14))}
+  .slot.hint-pulse{outline:3px solid var(--ai);outline-offset:2px}
+  .slot.filled{background:var(--hole-inner)}
+  .slot .piece{position:absolute;inset:4%;width:92%;height:92%}
+  /* Pieces */
+  .piece{
+    display:grid;place-items:center;cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none;
+    filter:drop-shadow(0 4px 5px rgba(10,15,40,.35));
+  }
+  .piece svg{width:88%;height:88%;pointer-events:none}
+  .piece.player{color:var(--player)} .piece.player svg{filter:drop-shadow(0 -2px 0 rgba(255,255,255,.25))}
+  .piece.ai{color:var(--ai)}
+  .piece:active{cursor:grabbing}
+  .piece.selected{outline:3px solid #101a33;outline-offset:2px;border-radius:12px;background:rgba(245,184,0,.25)}
+  .piece.dragging{position:fixed!important;z-index:60;pointer-events:none;cursor:grabbing;filter:drop-shadow(0 14px 16px rgba(0,0,0,.4))}
+  .piece.placed{cursor:default;animation:popIn .18s ease}
+  @keyframes popIn{0%{transform:scale(1.35)}100%{transform:scale(1)}}
+  .piece.wrong{animation:wrong .3s ease}
+  @keyframes wrong{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+  .piece.pop-fly{transition:transform .75s cubic-bezier(.2,.8,.3,1),opacity .75s;z-index:50}
+  /* Tray */
+  .tray{margin-top:0;background:var(--panel2);border:2px dashed #b9c8ea;border-radius:16px;padding:9px;touch-action:none}
+  .tray-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+  .tray-head strong{font-size:14px} .tray-head span{color:var(--muted);font-weight:800;font-size:13px}
+  .tray-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+  .tray-cell{aspect-ratio:1/1;background:#fff;border-radius:12px;display:grid;place-items:center;box-shadow:inset 0 0 0 1px #e2e9f7;position:relative}
+  .tray-cell .piece{width:100%;height:100%}
+  .tray-cell.empty{background:transparent;box-shadow:none;border:2px dashed #d3ddf2}
+  /* Opponent board small */
+  .board.mini{padding:8px;gap:5px;border-width:3px;border-radius:14px}
+  .board.mini .slot{border-radius:7px}
+  .board.mini .slot svg.hole-shape{width:70%;height:70%}
+  .ai-note{background:#fff7d6;border:1px solid #f0d060;color:#5c4300;border-radius:12px;padding:8px 10px;font-size:12.5px;font-weight:800;margin-top:8px}
+  @media (prefers-color-scheme: dark){ .ai-note{background:#2a2303;color:#ffe58a;border-color:#6b5600} .tray-cell{background:#16244a;box-shadow:inset 0 0 0 1px #2a3d6e} }
+  .stats{display:flex;gap:16px;flex-wrap:wrap;margin-top:7px}
+  .stat{display:flex;align-items:baseline;gap:5px;padding:0}
+  .stat b{font-family:"Baloo 2";font-size:15px;line-height:1} .stat span{font-size:10.5px;color:var(--muted);font-weight:900;text-transform:uppercase;letter-spacing:.05em}
+  /* Overlay */
+  .overlay{position:fixed;inset:0;background:rgba(4,10,28,.72);backdrop-filter:blur(4px);display:none;place-items:center;z-index:80;padding:16px}
+  .overlay.show{display:grid}
+  .modal{background:#fff;color:#101a33;border-radius:22px;max-width:520px;width:100%;padding:24px;box-shadow:0 24px 60px rgba(0,0,0,.45);text-align:center;max-height:92vh;max-height:92dvh;overflow:auto;-webkit-overflow-scrolling:touch}
+  .modal h2{font-family:"Baloo 2";font-size:34px;margin:4px 0 6px;line-height:1}
+  .modal p{color:#44557e;font-weight:700;line-height:1.5;margin:8px 0}
+  .rules{text-align:left;background:#eef3ff;border-radius:14px;padding:12px 14px;margin:14px 0;font-weight:700;color:#26365e;font-size:14.5px;line-height:1.55}
+  .rules li{margin:5px 0}
+  .final-score{display:flex;justify-content:center;gap:12px;margin:14px 0}
+  .final-box{border-radius:14px;padding:12px 18px;min-width:110px}
+  .final-box.p{background:#ffe3e0} .final-box.a{background:#fff3bf}
+  .final-box b{font-family:"Baloo 2";font-size:34px;display:block;line-height:1}
+  .final-box span{font-weight:900;font-size:12px;letter-spacing:.07em;text-transform:uppercase;color:#5b6b8f}
+  .pop-word{font-family:"Baloo 2";font-size:56px;color:var(--player);display:none;line-height:1;animation:pulse .4s infinite alternate}
+  .countdown{position:fixed;inset:0;display:none;place-items:center;z-index:90;pointer-events:none;background:rgba(4,10,28,.55)}
+  .countdown.show{display:grid}
+  .countdown div{font-family:"Baloo 2";font-size:min(28vw,150px);color:#fff;text-shadow:0 10px 40px rgba(0,0,0,.6);font-weight:800}
+  footer{color:#8ea6d8;text-align:center;font-weight:700;font-size:11.5px;margin-top:8px}
+  @media (prefers-color-scheme: light){ footer{color:#4a6396} }
+  /* Mode tabs + online lobby inside the modal */
+  .mode-seg{display:flex;justify-content:center;margin:12px 0 4px}
+  .mode-seg button{padding:8px 16px;font-size:14px}
+  .room-code{font-family:"Baloo 2";font-size:44px;font-weight:800;letter-spacing:.22em;color:#101a33;background:#eef3ff;border:2px dashed #b9c8ea;border-radius:14px;padding:6px 10px 6px calc(10px + .22em);margin:10px 0 4px;line-height:1.1}
+  .join-row{display:flex;gap:8px;justify-content:center;margin:10px 0 4px;flex-wrap:wrap}
+  .join-row input{font-family:"Baloo 2";font-size:22px;font-weight:800;letter-spacing:.3em;text-transform:uppercase;text-align:center;width:170px;padding:9px 6px 9px calc(6px + .3em);border:2px solid #b9c8ea;border-radius:12px;color:#101a33;background:#fff;outline:none}
+  .join-row input:focus{border-color:var(--board)}
+  .lobby-status{font-weight:800;color:#26365e;background:#fff7d6;border:1px solid #f0d060;border-radius:12px;padding:9px 12px;margin:12px 0;font-size:14px}
+  .lobby-status.ok{background:#e2f7e5;border-color:#7ed492;color:#14532d}
+  .lobby-status.err{background:#ffe3e0;border-color:#f0a49c;color:#7a130c}
+  .online-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px}
+  .online-actions .btn{box-shadow:none}
+  @media (max-width:880px){
+    /* ===== SCREEN LOCKED: the whole game lives in one fixed viewport.
+       No page scroll, no sideways drift, no pull-to-refresh while playing. */
+    html,body{height:100%;height:100dvh;overflow:hidden;overflow-x:hidden}
+    body{position:fixed;inset:0;width:100%;padding:6px 8px calc(6px + env(safe-area-inset-bottom))}
+    .wrap{height:100%;flex:none}
+    /* Header: title, start and the settings gear on one line */
+    .top{margin:0 0 5px}
+    .top-title{font-size:24px}
+    .top-sub{display:none}
+    .top-actions{gap:6px}
+    .top-actions .btn{padding:7px 12px;font-size:13px}
+    .gear-btn{width:36px;height:36px}
+    .gear-btn svg{width:19px;height:19px}
+    /* Slim score strip: one low row, nothing more */
+    .hud{gap:7px;padding:3px 10px;margin-bottom:6px}
+    .hud-side{gap:5px}
+    .hud-who{font-size:9.5px}
+    .hud-num{font-size:16px} .hud-num small{font-size:11px}
+    .mini-progress{width:34px;height:4px}
+    .hud-timer{gap:5px;padding:1px 9px 2px}
+    .timer-num{font-size:18px}
+    .timer-bar{width:34px}
+    .timer-unit{display:none}
+    .seg button{padding:5px 9px;font-size:12.5px}
+    /* Stack: slim opponent strip on top, player card fills ALL the rest */
+    .layout{display:flex;flex-direction:column;gap:7px;flex:1;min-height:0;align-items:stretch}
+    .ai-card{order:-1;display:flex;align-items:center;gap:9px;padding:6px 8px;flex:0 0 auto}
+    .layout .ai-card h2,.layout .ai-card p.sub,.layout .ai-card .rules{display:none}
+    .ai-card .board.mini{width:58px;padding:4px;gap:3px;border-width:2px;border-radius:9px;flex:0 0 auto}
+    .ai-card>div:last-child{flex:1;min-width:0;display:flex;align-items:center;gap:8px}
+    .ai-note{flex:1;margin-top:0;padding:5px 7px;font-size:11px;border-radius:9px}
+    .ai-card .stats{display:none} /* el marcador superior ya muestra el avance y el nivel del rival; aquí solo estorbaba y sacaba la tira de la pantalla */
+    .ai-note{min-width:0;overflow-wrap:break-word}
+    /* Player card stretches to the bottom of the screen; board and tray
+       share exactly the height that is left — nothing ever overflows */
+    .card{padding:8px;border-radius:14px}
+    .player-card{flex:1;min-height:0;display:flex;flex-direction:column}
+    .card h2{font-size:15px;display:inline-block;margin:0 6px 0 0}
+    .card p.sub{font-size:11.5px;margin:0 0 5px;display:inline}
+    .play-zone{display:flex;flex-direction:column;gap:6px;flex:1;min-height:0;justify-items:initial}
+    .play-zone .board{width:min(100%,38vh);width:min(100%,38dvh);flex:0 0 auto;margin:0 auto;padding:7px;gap:5px;border-width:3px;border-radius:13px}
+    .play-zone .tray{width:100%;flex:1;min-height:0;display:flex;flex-direction:column;padding:6px;border-radius:12px}
+    .tray-head{margin-bottom:4px;flex:0 0 auto}
+    .tray-head strong{font-size:12px} .tray-head span{font-size:11px}
+    .tray-grid{grid-template-columns:repeat(8,1fr);gap:5px;flex:1;min-height:0;align-content:space-between}
+    .tray-cell{border-radius:8px;min-height:0}
+    .stats{margin-top:6px;gap:12px;flex:0 0 auto}
+    .stat b{font-size:13px} .stat span{font-size:9px}
+    footer{display:none}
+    .modal{padding:18px 16px}
+    .modal h2{font-size:27px}
+    .room-code{font-size:36px}
+  }
+  @media (max-height:640px) and (min-width:881px){
+    .top-title{font-size:26px} .top-sub{display:none}
+    .timer-num{font-size:19px}
+    footer{display:none}
+  }
+  @media (prefers-reduced-motion: reduce){ *{animation-duration:.01ms!important;transition-duration:.01ms!important} }
+</style>
+<style id="theme-modern">
+/* ============================================================
+   TEMA MODERNO 2026 — superficies planas, bordes finos, sin
+   degradados de colores ni emojis. Tipografía Sora + Manrope.
+   Adaptación móvil Android/iOS: áreas seguras (safe-area) en
+   los cuatro lados para que nada quede bajo la barra de
+   gestos de Android ni bajo el indicador de inicio de iOS.
+   ============================================================ */
+:root{
+  color-scheme:light dark;
+  --bg:#eef1f5; --bg2:#eef1f5;
+  --panel:#ffffff; --panel2:#f2f4f8;
+  --ink:#12161d; --muted:#626c7c;
+  --border:#dde3ec;
+  --board:#2451c6; --board-dark:#1b3f9c; --board-edge:#16337e;
+  --hole:#0a1c44; --hole-inner:#071531;
+  --player:#e5484d; --player-dark:#c62f35; --player-light:#ff8589;
+  --ai:#f5a524; --ai-dark:#cf8407; --ai-light:#ffc95e;
+  --good:#17a34a; --track:#e2e8f1;
+  --on-dark:#ffffff;
+  --shadow:0 1px 2px rgba(16,24,40,.06),0 10px 28px rgba(16,24,40,.08);
+  --shadow-pop:0 24px 64px rgba(9,13,22,.28);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0b0e13; --bg2:#0b0e13;
+    --panel:#151a21; --panel2:#1c232e;
+    --ink:#f0f3f7; --muted:#98a2b3;
+    --border:#262f3c;
+    --board:#2451c6; --board-dark:#1b3f9c; --board-edge:#2c55b8;
+    --hole:#081630; --hole-inner:#050f26;
+    --track:#26303f;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 30px rgba(0,0,0,.35);
+    --shadow-pop:0 24px 64px rgba(0,0,0,.6);
+  }
+}
+html{height:-webkit-fill-available}
+body{
+  font-family:"Manrope",system-ui,-apple-system,"Segoe UI",sans-serif;
+  background:var(--bg); color:var(--ink);
+  min-height:100vh; min-height:100svh; min-height:100dvh; min-height:-webkit-fill-available;
+  /* La página respira por las cuatro áreas seguras del sistema */
+  padding:
+    calc(12px + env(safe-area-inset-top,0px))
+    calc(14px + env(safe-area-inset-right,0px))
+    calc(14px + env(safe-area-inset-bottom,0px))
+    calc(14px + env(safe-area-inset-left,0px));
+}
+.top-title,.card h2,.modal h2,.settings-panel h3,.hud-num,.timer-num,.room-code,
+.join-row input,.pop-word,.countdown div,.final-box b,.stat b,.tray-head strong{
+  font-family:"Sora","Manrope",system-ui,sans-serif; letter-spacing:-.01em;
+}
+.top-title{color:var(--ink); font-weight:800}
+.top-title span{color:var(--ai-dark)}
+@media (prefers-color-scheme: dark){ .top-title span{color:var(--ai)} }
+.top-sub{color:var(--muted)}
+@media (prefers-color-scheme: light){ .top-title{color:var(--ink)!important} .top-sub{color:var(--muted)!important} }
+/* Superficies: planas, borde de 1px, sombra corta */
+.card,.hud,.settings-panel,.modal{background:var(--panel); border:1px solid var(--border); box-shadow:var(--shadow)}
+.card{border-radius:14px}
+.hud{border-radius:12px; box-shadow:var(--shadow)}
+.modal{border-radius:16px; box-shadow:var(--shadow-pop); color:var(--ink)}
+.modal p{color:var(--muted)}
+.settings-panel{border-radius:14px; box-shadow:var(--shadow-pop)}
+/* Botones: radio contenido, sin sombras flotantes */
+.btn{border-radius:10px; box-shadow:none; font-weight:800; letter-spacing:.01em}
+.btn-primary{background:var(--player); color:#fff}
+.btn-primary:hover{background:var(--player-dark)}
+.btn-ghost{background:var(--panel2); color:var(--ink); border:1px solid var(--border)}
+.gear-btn{background:var(--panel); color:var(--ink); border:1px solid var(--border); box-shadow:var(--shadow); border-radius:10px}
+.gear-btn.open{background:var(--ink); color:var(--panel)}
+.gear-btn svg circle{fill:var(--panel)}
+.gear-btn.open svg circle{fill:var(--ink)}
+.btn svg,.seg svg,.tray-head svg{width:16px;height:16px;flex:0 0 auto;vertical-align:-3px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px}
+.seg{background:var(--panel2); border:1px solid var(--border); border-radius:10px; padding:3px}
+.seg button{border-radius:7px; display:inline-flex; align-items:center; gap:6px; color:var(--muted)}
+.seg button.active{background:var(--ink); color:var(--panel)}
+@media (prefers-color-scheme: dark){ .seg button{color:var(--muted)} .seg button.active{background:#f0f3f7; color:#12161d} }
+/* Marcador */
+.hud-timer{background:#0d1320; border-radius:9px}
+.timer-bar i{background:var(--ai)}
+.dot{box-shadow:inset 0 0 0 1px rgba(0,0,0,.14)}
+/* Tablero y bandeja */
+.board{
+  background:var(--board); border:1px solid var(--board-edge); border-radius:14px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.18), inset 0 -10px 22px rgba(0,0,0,.22);
+}
+.board.mini{border-width:1px; border-radius:10px}
+.slot{border-radius:9px; background:var(--hole); box-shadow:inset 0 3px 8px rgba(0,0,0,.7), inset 0 -1px 0 rgba(255,255,255,.07)}
+.slot.filled{background:var(--hole-inner)}
+.slot.hint-pulse{outline:2px solid var(--ai); outline-offset:2px}
+.piece{filter:drop-shadow(0 3px 4px rgba(9,13,22,.3))}
+.piece.selected{outline:2px solid var(--ink); background:rgba(245,165,36,.28)}
+.tray{background:var(--panel2); border:1px solid var(--border); border-radius:12px}
+.tray-cell{background:var(--panel); border-radius:9px; box-shadow:inset 0 0 0 1px var(--border)}
+.tray-cell.empty{background:transparent; border:1.5px dashed var(--border); box-shadow:none}
+@media (prefers-color-scheme: dark){ .tray-cell{background:#10151d} }
+.ai-note{background:#fdf3e0; border:1px solid #f3ddab; color:#6b4e00; border-radius:10px}
+@media (prefers-color-scheme: dark){ .ai-note{background:#2a2110; border-color:#5c4718; color:#ffd98a} }
+.rules{background:var(--panel2); border:1px solid var(--border); border-radius:12px; color:var(--ink)}
+.lobby-status{background:#fdf3e0; border-color:#f3ddab; color:#6b4e00; border-radius:10px}
+.lobby-status.ok{background:#e5f6ea; border-color:#a9dcb6; color:#14532d}
+.lobby-status.err{background:#fdecec; border-color:#f3b3b3; color:#7a130c}
+@media (prefers-color-scheme: dark){
+  .lobby-status{background:#2a2110; border-color:#5c4718; color:#ffd98a}
+  .lobby-status.ok{background:#12291a; border-color:#245c36; color:#9fe8b4}
+  .lobby-status.err{background:#33151a; border-color:#6e2530; color:#ffb4ab}
+}
+.final-box.p{background:#fdecec} .final-box.a{background:#fdf3e0}
+@media (prefers-color-scheme: dark){ .final-box.p{background:#33151a} .final-box.a{background:#2a2110} .final-box span{color:var(--muted)} }
+.room-code{background:var(--panel2); border:1.5px dashed var(--border); color:var(--ink); border-radius:12px}
+.join-row input{background:var(--panel); border:1.5px solid var(--border); color:var(--ink); border-radius:10px; font-size:20px}
+.join-row input:focus{border-color:var(--board)}
+/* Marca del modal: tres iconos SVG en pastillas, nada de emojis */
+.modal-mark{display:flex; justify-content:center; gap:10px; margin:2px 0 10px}
+.modal-mark span{width:52px; height:52px; border-radius:14px; display:grid; place-items:center; background:var(--panel2); border:1px solid var(--border); color:var(--ink)}
+.modal-mark span:nth-child(2){background:var(--player); border-color:var(--player-dark); color:#fff}
+.modal-mark span:nth-child(3){background:var(--ai); border-color:var(--ai-dark); color:#231a00}
+.modal-mark svg{width:27px; height:27px}
+.pop-word{color:var(--player)}
+.countdown{background:rgba(6,9,15,.6)}
+.countdown div{font-weight:800}
+.overlay{
+  background:rgba(6,9,15,.62);
+  /* El modal nunca toca la barra de gestos ni el notch */
+  padding:
+    calc(16px + env(safe-area-inset-top,0px))
+    calc(16px + env(safe-area-inset-right,0px))
+    calc(16px + env(safe-area-inset-bottom,0px))
+    calc(16px + env(safe-area-inset-left,0px));
+}
+.modal{max-height:calc(100dvh - 32px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px))}
+footer{color:var(--muted)}
+@media (prefers-color-scheme: light){ footer{color:var(--muted)} }
+/* ===== Móvil: pantalla bloqueada Y protegida por las áreas seguras ===== */
+@media (max-width:880px){
+  html,body{height:100%; height:100dvh; height:-webkit-fill-available}
+  body{
+    position:fixed; inset:0; width:100%;
+    padding:
+      calc(8px + env(safe-area-inset-top,0px))
+      calc(10px + env(safe-area-inset-right,0px))
+      calc(10px + env(safe-area-inset-bottom,0px))
+      calc(10px + env(safe-area-inset-left,0px));
+  }
+  /* La bandeja es lo último de la pantalla: colchón extra sobre la
+     barra de gestos de Android y el indicador de inicio de iOS */
+  .player-card{padding-bottom:calc(10px + env(safe-area-inset-bottom,0px))}
+  .tray{padding-bottom:calc(8px + env(safe-area-inset-bottom,0px))}
+  .card{border-radius:12px}
+  .board{border-radius:12px}
+  .hud{border-radius:11px}
+  .settings-panel{
+    max-height:calc(100dvh - 90px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));
+    overflow:auto; -webkit-overflow-scrolling:touch;
+  }
+  .modal{padding:20px 16px calc(20px + env(safe-area-inset-bottom,0px))}
+  .modal-mark span{width:46px;height:46px;border-radius:12px}
+  .modal-mark svg{width:24px;height:24px}
+  /* iOS no hace zoom al tocar campos con letra >= 16px */
+  input,select,textarea{font-size:16px}
+  .join-row input{font-size:20px}
+}
+</style>
+<style id="fix-captura">
+/* ============================================================
+   AJUSTE CAPTURA (petición de Mork): una sola barra superior —
+   nombre a la izquierda, marcador + tiempo EN EL CENTRO y
+   ajustes a la derecha. Sin fila de marcador separada, sin
+   botón «Jugando…» y sin texto sobre el tablero. Todo el alto
+   liberado va a la bandeja: rejilla 5×5 que LLENA su espacio
+   con filas 1fr, sin solapes ni fichas apiñadas.
+   ============================================================ */
+.top{
+  display:flex; align-items:center; gap:10px;
+  background:var(--panel); border:1px solid var(--border); border-radius:12px;
+  box-shadow:var(--shadow); padding:6px 8px 6px 12px; margin:0 0 8px;
+}
+.brand{flex:0 0 auto}
+.top-title{font-size:19px; line-height:1; white-space:nowrap}
+.top .hud{
+  flex:1 1 auto; min-width:0; margin:0; padding:2px 4px;
+  background:transparent; border:0; box-shadow:none; border-radius:0;
+}
+.top-actions{margin-left:0}
+@media (max-width:880px){
+  .top{gap:7px; padding:5px 6px 5px 10px; margin-bottom:6px; border-radius:11px}
+  .top-title{font-size:16px}
+  .top .hud{gap:6px; padding:0 2px}
+  .hud-who{font-size:9.5px}
+  .hud-num{font-size:16px} .hud-num small{font-size:11px}
+  .hud-timer{gap:5px; padding:1px 9px 2px}
+  .timer-num{font-size:18px}
+  .timer-bar{width:32px}
+  /* Tira del rival más baja: mini-tablero pequeño y nota en una línea */
+  .ai-card{padding:5px 8px; gap:8px}
+  .ai-card .board.mini{width:44px; padding:3px; gap:2px}
+  .ai-note{font-size:11px; padding:5px 8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  /* Tablero un poco más contenido para que la bandeja respire */
+  .play-zone .board{width:min(100%,35vh); width:min(100%,35dvh)}
+  /* BANDEJA: 5 columnas × 5 filas que llenan TODO el alto libre.
+     Sin aspect-ratio en las celdas: cada fila es 1fr y nada se
+     solapa con las estadísticas ni se sale de la tarjeta. */
+  .play-zone .tray{padding:7px}
+  .tray-grid{
+    grid-template-columns:repeat(5,1fr);
+    grid-template-rows:repeat(5,1fr);
+    gap:6px; flex:1; min-height:0; height:100%; align-content:stretch;
+  }
+  .tray-cell{aspect-ratio:auto; min-height:0; height:100%}
+  .tray-cell .piece svg{width:82%; height:82%}
+  .stats{margin-top:5px}
+}
+/* En pantallas estrechas el nombre sobra (la cabecera del sistema
+   ya dice «Perfect»): todo el ancho es para el marcador */
+@media (max-width:560px){
+  .brand{display:none}
+  .top .hud .mini-progress{display:none}
+  .top{padding-left:8px}
+}
+</style>
+<style id="fix-bandeja-centrada">
+/* ============================================================
+   CORRECCIÓN BANDEJA (petición de Mork): los símbolos de abajo
+   se pisaban unos a otros y no quedaban centrados en su casilla.
+
+   Causa: la hoja anterior daba a CADA celda de la bandeja
+   height:100% (el alto entero de la bandeja) y a la rejilla
+   height:100% dentro de una bandeja flex que ya tiene cabecera.
+   Cada celda desbordaba su fila hacia abajo, tapando las de
+   debajo y las estadísticas, y el símbolo se centraba en esa
+   caja gigante — no en su casilla visible.
+
+   Arreglo: la rejilla manda, no el contenido. Filas y columnas
+   con minmax(0,1fr), celdas sin altura propia (stretch de su
+   fila) y la pieza en absoluto inset:0 dentro de su celda,
+   con el SVG centrado con flex. Así ninguna celda puede
+   salirse de su fila ni tapar a otra, y cada símbolo queda
+   exactamente en el centro de su cuadrícula — en la bandeja
+   y también en los agujeros del tablero.
+   ============================================================ */
+.tray-grid{height:auto}
+.tray-cell{
+  height:auto!important;
+  min-width:0; min-height:0; overflow:hidden;
+  align-self:stretch; justify-self:stretch;
+  display:flex; align-items:center; justify-content:center;
+}
+/* La pieza llena SOLO su celda (absoluto), nunca empuja la rejilla.
+   Al arrastrar pasa a .dragging (fixed) y esta regla deja de aplicar. */
+.tray-cell .piece:not(.dragging){
+  position:absolute; inset:0; width:auto; height:auto;
+  display:flex; align-items:center; justify-content:center;
+}
+.tray-cell .piece svg{
+  flex:0 0 auto; display:block; width:78%; height:78%; margin:0;
+}
+/* Tablero: el agujero centra su forma igual, sin depender del span */
+.slot{display:flex; align-items:center; justify-content:center}
+.slot svg.hole-shape{flex:0 0 auto; display:block}
+.slot .piece{display:flex; align-items:center; justify-content:center}
+.slot .piece svg{flex:0 0 auto; display:block}
+@media (max-width:880px){
+  .play-zone .tray{overflow:hidden}
+  .tray-grid{
+    flex:1 1 auto; height:auto; min-height:0; min-width:0;
+    grid-template-columns:repeat(5,minmax(0,1fr));
+    grid-template-rows:repeat(5,minmax(0,1fr));
+    align-content:stretch; justify-content:stretch;
+  }
+  .tray-cell{height:auto!important; aspect-ratio:auto}
+}
+</style>
+<style id="v10-encuadre-tema">
+/* ============================================================
+   v10 — ENCUADRE A PANTALLA COMPLETA + TEMA MODERNO
+   (petición de Mork: «queda una columna en el lado derecho
+   vacía» + «tema CSS más moderno»)
+
+   LA CAUSA de la columna vacía: .layout heredaba
+   align-items:start de la rejilla de escritorio al pasar a
+   flex en columna en el móvil. Con align-items:start cada
+   tarjeta se encoge a su contenido — el tablero, limitado a
+   un % del alto — y el resto del ancho quedaba vacío a la
+   derecha. Arreglo estructural: en móvil el contenedor
+   estira (stretch) y TODAS las piezas del layout — tarjetas,
+   zona de juego y bandeja — ocupan el 100% del ancho. El
+   tablero, que es cuadrado y manda el alto, va centrado
+   dentro de su tarjeta a todo ancho; la bandeja ya no
+   hereda el ancho del tablero: llena la tarjeta entera, así
+   las fichas crecen a lo ancho y se cogen mejor.
+
+   TEMA MODERNO: fuera el azul saturado de juguete. Superficies
+   grafito mate, fondo neutro frío, bordes de 1px, sombras
+   cortas y radios contenidos. Rojo y ámbar se quedan solo
+   como colores de jugador. Sora para cifras, Manrope para
+   texto. Sin degradados de color ni brillos.
+   ============================================================ */
+:root{
+  --bg:#f2f3f5; --bg2:#f2f3f5;
+  --panel:#ffffff; --panel2:#eceef1;
+  --ink:#14161a; --muted:#68707d;
+  --border:#e0e3e8;
+  --board:#22262e; --board-dark:#191c22; --board-edge:#101216;
+  --hole:#0e1013; --hole-inner:#090a0c;
+  --player:#e5484d; --player-dark:#c62f35; --player-light:#ff8589;
+  --ai:#f5a524; --ai-dark:#b97a0a; --ai-light:#ffc95e;
+  --good:#17a34a; --track:#e3e6eb;
+  --shadow:0 1px 2px rgba(16,20,28,.05),0 8px 24px rgba(16,20,28,.06);
+  --shadow-pop:0 24px 64px rgba(10,12,16,.30);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0c0d10; --bg2:#0c0d10;
+    --panel:#16181d; --panel2:#1e2127;
+    --ink:#f2f3f5; --muted:#9aa0aa;
+    --border:#262a31;
+    --board:#262b34; --board-dark:#1d2129; --board-edge:#343b47;
+    --hole:#101216; --hole-inner:#0b0c0f;
+    --track:#262b33;
+    --shadow:0 1px 2px rgba(0,0,0,.45),0 10px 26px rgba(0,0,0,.30);
+    --shadow-pop:0 24px 64px rgba(0,0,0,.65);
+  }
+}
+body{background:var(--bg)}
+/* Tablero grafito mate: sin el azul eléctrico anterior */
+.board{
+  background:linear-gradient(180deg,var(--board),var(--board-dark));
+  border:1px solid var(--board-edge); border-radius:16px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.09), inset 0 -10px 22px rgba(0,0,0,.28);
+}
+.board.mini{border-radius:10px}
+.slot{background:var(--hole); box-shadow:inset 0 3px 9px rgba(0,0,0,.72), inset 0 -1px 0 rgba(255,255,255,.06)}
+.slot svg.hole-shape{color:#000000; filter:drop-shadow(0 1px 0 rgba(255,255,255,.10)}
+.slot.filled{background:var(--hole-inner)}
+.hud-timer{background:#14161a}
+@media (prefers-color-scheme: dark){ .hud-timer{background:#050607} }
+.top,.card,.hud{border-radius:14px}
+.tray{background:var(--panel2); border:1px solid var(--border); border-radius:12px}
+.tray-cell{background:var(--panel); box-shadow:inset 0 0 0 1px var(--border)}
+@media (prefers-color-scheme: dark){ .tray-cell{background:#101216} }
+.piece.selected{outline:2px solid var(--ink); outline-offset:2px}
+
+/* ---------- Escritorio: la zona de juego llena su columna ----------
+   La bandeja ocupa todo el ancho de su mitad (antes heredaba el
+   ancho capado del tablero y dejaba hueco a la derecha). */
+@media (min-width:881px){
+  .layout{width:100%}
+  .play-zone{width:100%}
+  .play-zone .board{width:min(100%,calc(100dvh - 230px)); justify-self:center}
+  .play-zone .tray{width:100%; justify-self:stretch}
+}
+
+/* ---------- Móvil: UNA sola pantalla, TODO al 100% de ancho ---------- */
+@media (max-width:880px){
+  .wrap{width:100%; max-width:none}
+  /* La corrección clave: stretch, no start. Nada se encoge. */
+  .layout{
+    display:flex; flex-direction:column;
+    align-items:stretch; width:100%;
+  }
+  .layout>.card{width:100%; max-width:none}
+  .ai-card{width:100%}
+  .player-card{width:100%; display:flex; flex-direction:column}
+  /* Zona de juego a todo ancho: tablero centrado (manda el alto)
+     y bandeja independiente, de borde a borde de la tarjeta */
+  .play-zone{width:100%; display:flex; flex-direction:column; flex:1; min-height:0}
+  .play-zone .board{
+    width:min(100%,34dvh); flex:0 0 auto; margin:0 auto;
+    border-radius:14px;
+  }
+  .play-zone .tray{
+    width:100%; max-width:none; flex:1 1 auto; min-height:0;
+    display:flex; flex-direction:column;
+  }
+  .tray-grid{width:100%}
+  .stats{width:100%}
+  .top{width:100%}
+}
+</style>
+<style id="fix-columna-v11">
+/* ============================================================
+   v11 — LA COLUMNA DERECHA, A LA RAÍZ (petición de Mork:
+   «sigue habiendo esa columna lateral derecha»)
+
+   Causa medida sobre su captura (iPhone, 440 px CSS): la barra
+   superior ocupaba el 97,7% del ancho, pero la tira de la IA
+   acababa al 60,9% y la tarjeta del jugador al 72,7% — las dos
+   tarjetas se encogían a su contenido y el resto era fondo vacío.
+
+   El origen: la regla base de .layout conserva align-items:start
+   de la rejilla de escritorio. Al pasar .layout a flex en columna
+   en el móvil, ese start manda sobre el eje horizontal y cada
+   tarjeta se encoge a lo que contiene (el tablero, capado por
+   alto): de ahí la «columna» vacía de la derecha. La hoja v10 lo
+   compensaba al final, pero el start seguía vivo en la base y en
+   WebKit el encogido persistía.
+
+   Arreglo en todos los niveles, sin depender de una sola regla:
+   1) la propia regla móvil de .layout (misma hoja que lo pasa a
+      flex) ya declara align-items:stretch;
+   2) aquí se repite el stretch y cada tarjeta lleva además
+      width:100% y align-self:stretch;
+   3) la zona de juego estira en horizontal y la bandeja va de
+      borde a borde;
+   4) el tablero, que es cuadrado, crece hasta el ancho completo
+      de su tarjeta (tope 46dvh para que la bandeja conserve
+      filas cogibles): así ni siquiera queda hueco visual a la
+      derecha del tablero.
+   ============================================================ */
+@media (max-width:880px){
+  .layout{align-items:stretch}
+  .layout>.card{width:100%; max-width:none; align-self:stretch}
+  .play-zone{align-items:stretch}
+  .play-zone .board{
+    width:min(100%,46vh); width:min(100%,46dvh);
+    align-self:center; margin:0 auto;
+  }
+  .play-zone .tray{width:100%; align-self:stretch}
+}
+</style>
+<style id="fix-figuras-grandes">
+/* ============================================================
+   v12 — FIGURAS MÁS GRANDES (petición de Mork: «ahora las
+   figuras son demasiado pequeñas»)
+
+   Causa: el tamaño se perdía en tres reducciones encadenadas.
+   El SVG del agujero se dibujaba al 72% de su casilla (fijado
+   en el JS al construir el tablero y en el CSS), el de la
+   pieza de la bandeja al 78%, y cada dibujo ocupa de por sí
+   ~82% de su lienzo de 100×100. Resultado: la figura visible
+   rondaba la mitad de su casilla, pequeña y difícil de coger.
+
+   Arreglo: la forma llena su casilla — agujero al 90%, pieza
+   colocada casi a ras del agujero, pieza de bandeja al 92% —
+   y en móvil se liberan unos píxeles de alto para la bandeja
+   (mini-tablero rival más bajo, huecos y márgenes recortados)
+   sin tocar la estructura de una sola pantalla.
+   ============================================================ */
+.slot svg.hole-shape{width:90%; height:90%}
+.board.mini .slot svg.hole-shape{width:86%; height:86%}
+.piece svg{width:96%; height:96%}
+.slot .piece{inset:2%; width:96%; height:96%}
+.tray-cell .piece svg{width:92%; height:92%}
+@media (max-width:880px){
+  /* La tira del rival cede alto: mini-tablero de 44 a 34 px */
+  .ai-card .board.mini{width:34px; padding:2px; gap:2px}
+  .ai-card{padding:4px 8px}
+  /* Tablero y bandeja con menos aire muerto: más casilla útil */
+  .play-zone .board{padding:6px; gap:4px}
+  .play-zone{gap:5px}
+  .play-zone .tray{padding:6px}
+  .tray-head{margin-bottom:3px}
+  .tray-grid{gap:5px}
+  .stats{margin-top:4px}
+}
+</style>
+<style id="fix-figuras-v13">
+/* ============================================================
+   v13 — FIGURAS GRANDES DE VERDAD (petición de Mork:
+   «siguen viéndose pequeñas»)
+
+   Por qué la v12 no bastó: subía el tamaño del SVG, pero la
+   FORMA dentro del lienzo 100×100 solo ocupa el 72–86% (el
+   círculo tiene r=36 → 72%). La figura visible era
+   SVG × relleno-del-lienzo: dos reducciones encadenadas.
+   Arreglo en la raíz, en tres frentes:
+
+   1) GEOMETRÍA: svgShape() ahora escala cada forma ×1.15
+      sobre su centro (50,50) en el propio JS. La forma que
+      ocupaba el 72% pasa al ~83% del lienzo y la del 86%
+      llega al ~99%, sin salirse (la mayor extensión es 86:
+      86×1.15 = 98,9 < 100). Aplica a agujeros, piezas de la
+      bandeja, piezas colocadas y al mini-tablero rival.
+   2) SVG A RAS: agujero al 96% de su casilla (el JS pone el
+      estilo en línea al 96% y esta hoja lo respalda), pieza
+      colocada casi a ras (inset 1%) y SVG de pieza al 100%
+      de su caja, también en la bandeja (antes 92%).
+   3) ALTO REAL PARA LA BANDEJA (móvil): el tablero pasa de
+      46dvh a 40dvh — con la geometría ×1.15 sus formas se
+      ven igual o más grandes que antes — y esos ~50 px van
+      a las filas de la bandeja, que es donde la pieza se
+      quedaba en ~40 px visibles. Además se elimina la triple
+      cuenta del área segura inferior (body + tarjeta +
+      bandeja la sumaban tres veces): la deja solo el body,
+      y la tarjeta y la bandeja recuperan ese alto.
+   ============================================================ */
+.slot svg.hole-shape{width:96%; height:96%}
+.board.mini .slot svg.hole-shape{width:92%; height:92%}
+.piece svg{width:100%; height:100%}
+.tray-cell .piece svg{width:100%; height:100%}
+.slot .piece{inset:1%; width:98%; height:98%}
+@media (max-width:880px){
+  .play-zone .board{width:min(100%,40vh); width:min(100%,40dvh)}
+  /* El body ya suma env(safe-area-inset-bottom): no repetirla
+     dentro de la tarjeta ni de la bandeja, ese alto es de juego */
+  .player-card{padding-bottom:8px}
+  .play-zone .tray{padding-bottom:6px}
+  .stats{margin-top:3px}
+  .stat b{font-size:12px}
+  .tray-head{margin-bottom:2px}
+}
+</style>
+<style id="fix-multi8">
+/* ============================================================
+   v14 — SALAS DE HASTA 8 JUGADORES (petición de Mork)
+   Vestíbulo con lista de jugadores (n/8), botón de WhatsApp
+   con el código, un mini-tablero por rival en escritorio y
+   clasificación en vivo en pastillas en el móvil, para que
+   la pantalla única bloqueada no crezca ni haga scroll.
+   ============================================================ */
+.btn-whats{background:#22a35a;color:#fff;text-decoration:none}
+.btn-whats:hover{background:#1b8a4c}
+.btn-whats svg{width:16px;height:16px}
+/* Lista de jugadores del vestíbulo */
+#lobbyPlayers{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin:4px 0 2px}
+#lobbyPlayers:empty{display:none}
+.lobby-player{display:inline-flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--border);border-radius:999px;padding:4px 11px 4px 6px;font-size:13px;font-weight:800;color:var(--ink)}
+.lobby-player .pdot{width:10px;height:10px;border-radius:50%;flex:0 0 auto}
+.lobby-player.me{outline:2px solid var(--ink);outline-offset:-1px}
+.lobby-player .host-tag{font-size:9.5px;font-weight:900;letter-spacing:.06em;color:var(--muted)}
+/* Mini-tableros de rivales (escritorio) */
+#rivalBoards{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:10px}
+.rival-mini h3{margin:0 0 4px;font-size:12px;font-weight:800;display:flex;align-items:center;gap:6px;color:var(--ink)}
+.rival-mini h3 .pdot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+.rival-mini h3 b{margin-left:auto;font-family:"Sora",sans-serif}
+.rival-mini .board.mini{width:100%}
+/* Clasificación en vivo */
+#rankList{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:4px}
+#rankList li{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:800;color:var(--ink);background:var(--panel2);border:1px solid var(--border);border-radius:9px;padding:4px 9px}
+#rankList li .pdot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+#rankList li b{margin-left:auto;font-family:"Sora",sans-serif}
+#rankList li.me{outline:2px solid var(--ink);outline-offset:-1px}
+/* Clasificación final en el modal */
+#finalRanking{list-style:none;margin:10px auto 2px;padding:0;max-width:340px;text-align:left}
+#finalRanking li{display:flex;align-items:center;gap:8px;font-weight:800;font-size:14.5px;color:var(--ink);background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:6px 12px;margin:5px 0}
+#finalRanking li .pdot{width:10px;height:10px;border-radius:50%;flex:0 0 auto}
+#finalRanking li b{margin-left:auto;font-family:"Sora",sans-serif}
+#finalRanking li.winner{background:#fdf3e0;border-color:#f3ddab}
+#finalRanking li.fr-head{background:transparent;border:0;padding:2px 12px 0;font-size:11px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+@media (prefers-color-scheme: dark){ #finalRanking li.winner{background:#2a2110;border-color:#5c4718} }
+/* Móvil: la tira del rival muestra solo la clasificación en
+   pastillas compactas que envuelven; los mini-tableros quedan
+   para escritorio y la pantalla sigue siendo una sola. */
+@media (max-width:880px){
+  #rivalBoards{display:none}
+  #rankList{flex-direction:row;flex-wrap:wrap;margin:0;gap:5px}
+  #rankList li{font-size:11.5px;padding:3px 8px;border-radius:999px}
+  #rankList li b{margin-left:2px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <h1 class="top-title">PERF<span>ECT</span></h1>
+    </div>
+    <!-- HUD integrado EN la barra superior: marcador y tiempo en el centro -->
+    <section class="hud" aria-label="Marcador">
+      <div class="hud-side">
+        <span class="dot"></span><span class="hud-who">TÚ</span>
+        <span class="hud-num"><span id="scorePlayer">0</span> <small>/ 25</small></span>
+        <span class="mini-progress p"><i id="progPlayer"></i></span>
+      </div>
+      <div class="hud-timer">
+        <span class="timer-num" id="timerNum">80.0</span>
+        <span class="timer-bar"><i id="timerBar"></i></span>
+        <span class="timer-unit">SEG</span>
+      </div>
+      <div class="hud-side ai">
+        <span class="mini-progress a"><i id="progAI"></i></span>
+        <span class="hud-num"><span id="scoreAI">0</span> <small>/ 25</small></span>
+        <span class="hud-who" id="oppWho">IA</span><span class="dot y"></span>
+      </div>
+    </section>
+    <div class="top-actions">
+      <button class="gear-btn" id="btnSettings" type="button" aria-label="Ajustes" aria-expanded="false" aria-controls="settingsPanel" title="Ajustes">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><circle cx="9" cy="6" r="2.3" fill="#fff"/><line x1="3" y1="12" x2="21" y2="12"/><circle cx="15" cy="12" r="2.3" fill="#fff"/><line x1="3" y1="18" x2="21" y2="18"/><circle cx="7" cy="18" r="2.3" fill="#fff"/></svg>
+      </button>
+      <!-- SETTINGS PANEL: difficulty, sound and reset live here -->
+      <div class="settings-panel" id="settingsPanel">
+        <h3>Ajustes</h3>
+        <div class="set-row">
+          <span id="diffLabel">Dificultad de la IA (solo modo solo)</span>
+          <div class="seg" id="diffSeg" role="group" aria-labelledby="diffLabel">
+            <button type="button" data-diff="facil">Fácil</button>
+            <button type="button" data-diff="normal" class="active">Normal</button>
+            <button type="button" data-diff="dificil">Difícil</button>
+            <button type="button" data-diff="perfect">Perfecta</button>
+          </div>
+        </div>
+        <div class="set-row">
+          <span>Sonido y partida</span>
+          <div class="set-actions">
+            <button class="btn btn-ghost" id="btnSound" aria-label="Sonido activado o desactivado"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor" stroke="none"/><path class="snd-waves" d="M15.5 8.5a5 5 0 0 1 0 7"/><path class="snd-waves" d="M18 6a8.5 8.5 0 0 1 0 12"/></svg><span id="soundLabel">Sonido</span></button>
+            <button class="btn btn-ghost" id="btnReset"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.3"/><path d="M3 4v5h5"/></svg>Reiniciar</button>
+          </div>
+        </div>
+        <p class="hint">Arrastra cada pieza a su agujero — o tócala y luego toca el agujero. Si fallas, la pieza rebota a la bandeja. Para jugar online con amigos (hasta 8 en la misma sala), elige «Online · hasta 8» en la pantalla de inicio.</p>
+      </div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <!-- PLAYER -->
+    <section class="card player-card" aria-label="Tu tablero">
+      <div class="play-zone">
+        <div class="board" id="boardPlayer"></div>
+
+        <div class="tray">
+          <div class="tray-head"><strong><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:15px;height:15px;vertical-align:-2px;margin-right:5px"><path d="M14 3h3a4 4 0 0 1 4 4v3h-2.2a2.3 2.3 0 0 0 0 4.6H21V18a3 3 0 0 1-3 3h-3v-2.2a2.3 2.3 0 0 0-4.6 0V21H7a4 4 0 0 1-4-4v-3h2.2a2.3 2.3 0 0 0 0-4.6H3V7a3 3 0 0 1 3-3h3v2.2a2.3 2.3 0 0 0 4.6 0V3z" transform="scale(0.92) translate(1,1)"/></svg>Tu bandeja de piezas</strong><span id="trayCount">25 por colocar</span></div>
+          <div class="tray-grid" id="tray"></div>
+        </div>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><b id="statPlaced">0</b><span>Colocadas</span></div>
+        <div class="stat"><b id="statFails">0</b><span>Fallos</span></div>
+        <div class="stat"><b id="statAcc">—</b><span>Acierto</span></div>
+      </div>
+    </section>
+
+    <!-- OPPONENT (IA u online) -->
+    <aside class="card ai-card" aria-label="Tablero del rival">
+      <div>
+        <h2 id="oppTitle">La IA</h2>
+        <p class="sub" id="oppSub">Juega a la vez en su tablero, con las piezas amarillas.</p>
+        <div class="board mini" id="boardAI"></div>
+        <div id="rivalsWrap" style="display:none">
+          <div id="rivalBoards"></div>
+          <ol id="rankList" aria-label="Clasificación en vivo"></ol>
+        </div>
+      </div>
+      <div>
+        <div class="ai-note" id="aiMsg">La IA está esperando a que empiece la partida…</div>
+        <div class="stats" style="grid-template-columns:1fr 1fr">
+          <div class="stat"><b id="statAI">0</b><span id="statAILabel">IA colocadas</span></div>
+          <div class="stat"><b id="statDiff">Normal</b><span>Nivel</span></div>
+        </div>
+        <div class="rules" style="margin-top:12px">
+          <strong>Cómo se gana</strong>
+          <ul style="margin:6px 0 0;padding-left:18px">
+            <li>Completa las 25 antes que tu rival → ganas al instante.</li>
+            <li>Si suena el ¡POP! a los 80 s, gana quien tenga más piezas encajadas.</li>
+            <li>Empate a piezas = empate. Sin trampas: cada forma solo entra en su agujero.</li>
+          </ul>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer>Perfect digital — contra la IA u online con hasta 8 jugadores · 25 piezas · 80 segundos · Al acabar el tiempo, la bandeja salta.</footer>
+</div>
+
+<!-- COUNTDOWN -->
+<div class="countdown" id="countdown"><div id="countNum">3</div></div>
+
+<!-- START / RESULT MODAL -->
+<div class="overlay show" id="overlay">
+  <div class="modal">
+    <div class="modal-mark" aria-hidden="true">
+      <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5"/><path d="M9 2h6"/></svg></span>
+      <span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M14.5 3.5h2.6A3.4 3.4 0 0 1 20.5 6.9v2.6h-1.9a2.15 2.15 0 0 0 0 4.3h1.9v2.6a3.4 3.4 0 0 1-3.4 3.4h-2.6v-1.9a2.15 2.15 0 0 0-4.3 0v1.9H7.6a3.4 3.4 0 0 1-3.4-3.4v-2.6h1.9a2.15 2.15 0 0 0 0-4.3H4.2V6.9a3.4 3.4 0 0 1 3.4-3.4h2.6v1.9a2.15 2.15 0 0 0 4.3 0z" transform="translate(-0.35,0.6) scale(0.97)"/></svg></span>
+      <span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.8 14 8l6.2-2.2L15.7 11l6.5.4-5.6 3.4 5 4.2-6.4-1.3L13.6 24 11.4 18 5.6 21l3.2-5.7L2.6 12.7l6.6-1L6 6l5.9 2.4z" transform="scale(0.94) translate(0.7,0.7)"/></svg></span>
+    </div>
+    <h2 id="modalTitle">¿Listo para el ¡POP!?</h2>
+    <p id="modalText">Es el duelo clásico de Perfect: 25 formas, 25 agujeros y 80 segundos. Si el tiempo se acaba, la bandeja salta y todas las piezas salen volando.</p>
+    <div class="pop-word" id="popWord">¡POP!</div>
+    <div class="final-score" id="finalScore" style="display:none">
+      <div class="final-box p"><b id="finalPlayer">0</b><span>Tú</span></div>
+      <div class="final-box a"><b id="finalAI">0</b><span id="finalOppLabel">IA</span></div>
+    </div>
+    <ol id="finalRanking" style="display:none"></ol>
+
+    <!-- MODE TABS -->
+    <div class="seg mode-seg" id="modeSeg" role="group" aria-label="Modo de juego">
+      <button type="button" data-mode="solo" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M12 8V4"/><circle cx="12" cy="3" r="1" fill="currentColor"/><circle cx="9" cy="13" r="1.1" fill="currentColor" stroke="none"/><circle cx="15" cy="13" r="1.1" fill="currentColor" stroke="none"/><path d="M9.5 16.5h5"/></svg>Contra la IA</button>
+      <button type="button" data-mode="online"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14.5 14.5 0 0 1 0 18"/><path d="M12 3a14.5 14.5 0 0 0 0 18"/></svg>Online · hasta 8</button>
+    </div>
+
+    <!-- SOLO PANEL -->
+    <div id="soloPanel">
+      <div class="rules">
+        <strong>Cómo jugar</strong>
+        <ul style="margin:6px 0 0;padding-left:18px">
+          <li><b>Arrastra</b> la pieza roja hasta el agujero con su misma forma.</li>
+          <li>En el móvil también vale: <b>toca la pieza</b> y después <b>toca el agujero</b>.</li>
+          <li>Si te equivocas de agujero, la pieza rebota y vuelve a la bandeja.</li>
+          <li>Elige la dificultad en <b>Ajustes</b> (el icono de arriba): en <b>Perfecta</b> la IA casi no falla.</li>
+        </ul>
+      </div>
+      <button class="btn btn-primary" id="btnModalStart" style="font-size:17px;padding:13px 26px;width:100%">Empezar — ¡a encajar!</button>
+      <p style="font-size:13px;margin-top:10px">Consejo: memoriza dónde va cada forma antes de empezar. Los primeros segundos cuentan.</p>
+    </div>
+
+    <!-- ONLINE PANEL -->
+    <div id="onlinePanel" style="display:none">
+      <div id="lobbyHome">
+        <div class="online-actions">
+          <button class="btn btn-primary" id="btnCreateRoom" style="font-size:16px;padding:12px 22px">Crear sala nueva</button>
+        </div>
+        <div class="join-row">
+          <input id="joinCode" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" maxlength="4" placeholder="CÓDIGO" aria-label="Código de sala" />
+          <button class="btn btn-ghost" id="btnJoinRoom" style="font-size:15px;padding:10px 18px">Unirme a la sala</button>
+        </div>
+      </div>
+      <div id="lobbyRoom" style="display:none">
+        <div style="font-weight:900;font-size:11px;letter-spacing:.08em;color:var(--muted)">CÓDIGO DE TU SALA — PÁSASELO A TUS AMIGOS (HASTA 8 JUGADORES)</div>
+        <div class="room-code" id="roomCodeBig">····</div>
+        <div class="online-actions" style="margin-top:2px">
+          <button class="btn btn-ghost" id="btnCopyCode" style="font-size:13.5px;padding:8px 14px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span id="copyLabel">Copiar código</span></button>
+          <a class="btn btn-whats" id="btnWhats" href="#" target="_blank" rel="noopener" style="font-size:13.5px;padding:8px 14px"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.04 2a9.9 9.9 0 0 0-8.4 15.2L2.1 22l4.9-1.5A9.9 9.9 0 1 0 12.04 2zm0 18.1a8.2 8.2 0 0 1-4.2-1.1l-.3-.2-2.9.9.9-2.8-.2-.3a8.2 8.2 0 1 1 6.7 3.5zm4.6-6.1c-.3-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4 0-.5.2-.7l.5-.6c.1-.2.1-.4 0-.5l-.8-1.9c-.2-.5-.4-.4-.6-.4h-.5c-.2 0-.5.1-.7.3-.9.9-1.1 2.2-.2 3.9a11.6 11.6 0 0 0 4.5 4.2c1.7.8 2.4.9 3.2.7.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.1-1.2 0-.1-.2-.2-.5-.3z"/></svg>Enviar por WhatsApp</a>
+        </div>
+        <div class="lobby-status" id="lobbyStatus">Conectando con la sala…</div>
+        <div id="lobbyPlayers" aria-label="Jugadores en la sala"></div>
+        <div class="online-actions">
+          <button class="btn btn-primary" id="btnLobbyStart" disabled style="font-size:16px;padding:12px 22px">Empezar partida</button>
+          <button class="btn btn-ghost" id="btnLeaveRoom">Salir de la sala</button>
+        </div>
+        <p style="font-size:13px;margin-top:8px" id="lobbyHint">El anfitrión (quien crea la sala) pulsa «Empezar partida» cuando ya esté dentro quien quieras — de 2 a 8 jugadores. Todos juegan el mismo tablero a la vez, cada uno con sus piezas.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  // ---------- SHAPES ----------
+  var SHAPES = [
+    {name:"Círculo", svg:'<circle cx="50" cy="50" r="36"/>'},
+    {name:"Cuadrado", svg:'<rect x="16" y="16" width="68" height="68" rx="5"/>'},
+    {name:"Triángulo", svg:'<polygon points="50,13 87,81 13,81"/>'},
+    {name:"Rombo", svg:'<polygon points="50,9 85,50 50,91 15,50"/>'},
+    {name:"Estrella", svg:'<polygon points="50,8 62,37 93,37 68,56 77,87 50,68 23,87 32,56 7,37 38,37"/>'},
+    {name:"Corazón", svg:'<path d="M50 86 C18 62 13 39 29 24 C41 13 50 25 50 33 C50 25 59 13 71 24 C87 39 82 62 50 86 Z"/>'},
+    {name:"Cruz", svg:'<polygon points="38,13 62,13 62,38 87,38 87,62 62,62 62,87 38,87 38,62 13,62 13,38 38,38"/>'},
+    {name:"Pentágono", svg:'<polygon points="50,11 89,40 74,85 26,85 11,40"/>'},
+    {name:"Hexágono", svg:'<polygon points="50,9 85,28 85,72 50,91 15,72 15,28"/>'},
+    {name:"Octógono", svg:'<polygon points="31,11 69,11 89,31 89,69 69,89 31,89 11,69 11,31"/>'},
+    {name:"Óvalo", svg:'<ellipse cx="50" cy="50" rx="43" ry="27"/>'},
+    {name:"Rectángulo", svg:'<rect x="9" y="29" width="82" height="42" rx="5"/>'},
+    {name:"Semicírculo", svg:'<path d="M13 64 A37 37 0 0 1 87 64 Z"/>'},
+    {name:"Luna", svg:'<path d="M72 8 C42 16 27 33 27 50 C27 67 42 84 72 92 C54 74 47 63 47 50 C47 37 54 26 72 8 Z"/>'},
+    {name:"Flecha", svg:'<polygon points="11,37 57,37 57,19 91,50 57,81 57,63 11,63"/>'},
+    {name:"Rayo", svg:'<polygon points="57,7 21,57 43,57 37,93 79,41 55,41"/>'},
+    {name:"Gota", svg:'<path d="M50 9 C50 9 21 45 21 63 A29 29 0 0 0 79 63 C79 45 50 9 50 9 Z"/>'},
+    {name:"Trapecio", svg:'<polygon points="28,23 72,23 89,77 11,77"/>'},
+    {name:"Romboide", svg:'<polygon points="31,23 89,23 69,77 11,77"/>'},
+    {name:"Aspa", svg:'<polygon points="21,17 37,17 50,33 63,17 79,17 79,33 64,50 79,67 79,83 63,83 50,67 37,83 21,83 21,67 36,50 21,33"/>'},
+    {name:"T", svg:'<polygon points="13,15 87,15 87,36 62,36 62,85 38,85 38,36 13,36"/>'},
+    {name:"L", svg:'<polygon points="17,11 42,11 42,63 83,63 83,89 17,89"/>'},
+    {name:"Aro", svg:'<path fill-rule="evenodd" d="M50 11 A39 39 0 1 0 50 89 A39 39 0 1 0 50 11 Z M50 33 A17 17 0 1 1 50 67 A17 17 0 1 1 50 33 Z"/>'},
+    {name:"Flor", svg:'<circle cx="50" cy="25" r="16"/><circle cx="74" cy="42" r="16"/><circle cx="65" cy="71" r="16"/><circle cx="35" cy="71" r="16"/><circle cx="26" cy="42" r="16"/><circle cx="50" cy="48" r="13"/>'},
+    {name:"Pajarita", svg:'<polygon points="15,15 85,15 85,29 58,50 85,71 85,85 15,85 15,71 42,50 15,29"/>'}
+  ];
+  function svgShape(id){ return '<svg viewBox="0 0 100 100" aria-hidden="true"><g fill="currentColor" transform="translate(50 50) scale(1.15) translate(-50 -50)">'+SHAPES[id].svg+'</g></svg>'; }
+  function shuffle(a){ a=a.slice(); for(var i=a.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var t=a[i];a[i]=a[j];a[j]=t; } return a; }
+  // Deterministic RNG so both phones in a room build the SAME board from a seed
+  function mulberry32(seed){ var t=seed>>>0; return function(){ t+=0x6D2B79F5; var r=Math.imul(t^t>>>15,1|t); r^=r+Math.imul(r^r>>>7,61|r); return ((r^r>>>14)>>>0)/4294967296; }; }
+  function seededShuffle(a,seed){ a=a.slice(); var rnd=mulberry32(seed); for(var i=a.length-1;i>0;i--){ var j=Math.floor(rnd()*(i+1)); var t=a[i];a[i]=a[j];a[j]=t; } return a; }
+  function hashStr(s){ var h=2166136261; for(var i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); } return h>>>0; }
+
+  // ---------- STATE ----------
+  var GAME_TIME = 80; // segundos por partida (antes 60, +20 a petición de Mork)
+  var DIFFS = { // ritmos reescalados x80/60 para que la IA tarde lo mismo en completar
+    facil:   {label:"Fácil",    mean:4130, jitter:1730, failChance:0.22},
+    normal:  {label:"Normal",   mean:3130, jitter:1330, failChance:0.14},
+    dificil: {label:"Difícil",  mean:2400, jitter:1000, failChance:0.08},
+    perfect: {label:"Perfecta", mean:1890, jitter:690,  failChance:0.02}
+  };
+  var diffKey="normal";
+  var mode="solo"; // "solo" | "online"
+  var playing=false, finished=false;
+  var timeLeft=GAME_TIME, timerId=null, aiTimer=null, lastTickSec=99;
+  var playerPlaced=0, aiPlaced=0, fails=0, attempts=0;
+  var boardOrder=[], selectedPiece=null;
+  var soundOn=true;
+
+  var $=function(id){return document.getElementById(id);};
+  var boardPlayer=$("boardPlayer"), boardAI=$("boardAI"), tray=$("tray");
+  function oppName(){ return mode==="online" ? (Room.leaderName || "Un rival") : "La IA"; }
+  function oppShort(){ return mode==="online" ? "LÍDER" : "IA"; }
+  // Paleta por jugador en salas online: tú siempre rojo; los rivales
+  // reciben estos colores en el orden ordenado de presencia (el mismo
+  // en todos los móviles, porque las claves se ordenan igual).
+  var RIVAL_COLORS=["#f5a524","#22c55e","#3b82f6","#a855f7","#ec4899","#06b6d4","#84cc16"];
+  var MAX_PLAYERS=8;
+
+  // ---------- AUDIO (WebAudio, sin archivos) ----------
+  var actx=null;
+  function ac(){ if(!actx){ try{ actx=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } if(actx&&actx.state==="suspended") actx.resume(); return actx; }
+  function beep(freq,dur,type,vol,when){
+    if(!soundOn) return; var c=ac(); if(!c) return;
+    var t=c.currentTime+(when||0); var o=c.createOscillator(), g=c.createGain();
+    o.type=type||"sine"; o.frequency.value=freq;
+    g.gain.setValueAtTime(vol||0.12,t); g.gain.exponentialRampToValueAtTime(0.001,t+dur);
+    o.connect(g); g.connect(c.destination); o.start(t); o.stop(t+dur+0.02);
+  }
+  function sndPlace(){ beep(660,0.09,"triangle",0.14); beep(990,0.12,"triangle",0.12,0.05); }
+  function sndWrong(){ beep(160,0.16,"sawtooth",0.07); }
+  function sndTick(){ beep(1050,0.05,"square",0.05); }
+  function sndWin(){ [523,659,784,1046].forEach(function(f,i){ beep(f,0.18,"triangle",0.13,i*0.11); }); }
+  function sndPop(){
+    if(!soundOn) return; var c=ac(); if(!c) return;
+    var len=c.sampleRate*0.35, buf=c.createBuffer(1,len,c.sampleRate), d=buf.getChannelData(0);
+    for(var i=0;i<len;i++){ d[i]=(Math.random()*2-1)*Math.pow(1-i/len,1.6); }
+    var src=c.createBufferSource(); src.buffer=buf;
+    var f=c.createBiquadFilter(); f.type="lowpass"; f.frequency.value=900;
+    var g=c.createGain(); g.gain.value=0.5;
+    src.connect(f); f.connect(g); g.connect(c.destination); src.start();
+    beep(90,0.4,"sine",0.3);
+  }
+
+  // ---------- BUILD BOARDS ----------
+  // seed === null -> random boards (solo). seed = number -> identical boards on both phones.
+  function buildBoards(seed){
+    var ids=SHAPES.map(function(_,i){return i;});
+    boardOrder = (seed==null) ? shuffle(ids) : seededShuffle(ids, seed);
+    boardPlayer.innerHTML=""; boardAI.innerHTML="";
+    boardOrder.forEach(function(shapeId){
+      var s=document.createElement("div"); s.className="slot"; s.dataset.shape=shapeId;
+      s.setAttribute("role","button"); s.setAttribute("aria-label","Agujero "+SHAPES[shapeId].name); s.title="Agujero: "+SHAPES[shapeId].name;
+      s.innerHTML='<span class="hole-shape" style="display:grid;place-items:center;width:100%;height:100%">'+svgShape(shapeId)+'</span>';
+      s.querySelector("svg").classList.add("hole-shape");
+      s.addEventListener("click",function(){ onSlotTap(s); });
+      boardPlayer.appendChild(s);
+
+      var a=document.createElement("div"); a.className="slot"; a.dataset.shape=shapeId;
+      a.innerHTML='<span style="display:grid;place-items:center;width:100%;height:100%">'+svgShape(shapeId)+'</span>';
+      a.querySelector("svg").classList.add("hole-shape");
+      boardAI.appendChild(a);
+    });
+    document.querySelectorAll("#boardPlayer .slot svg, #boardAI .slot svg").forEach(function(sv){ sv.style.width="96%"; sv.style.height="96%"; });
+    buildTray(seed);
+  }
+  function buildTray(seed){
+    tray.innerHTML="";
+    var ids=SHAPES.map(function(_,i){return i;});
+    var order = (seed==null) ? shuffle(ids) : seededShuffle(ids, (seed^0x9e3779b9)>>>0);
+    order.forEach(function(shapeId){
+      var cell=document.createElement("div"); cell.className="tray-cell"; cell.dataset.cell=shapeId;
+      var p=document.createElement("div"); p.className="piece player"; p.dataset.shape=shapeId;
+      p.setAttribute("role","button"); p.setAttribute("aria-label","Pieza "+SHAPES[shapeId].name);
+      p.title=SHAPES[shapeId].name;
+      p.innerHTML=svgShape(shapeId);
+      attachDrag(p, cell);
+      cell.appendChild(p); tray.appendChild(cell);
+    });
+  }
+
+  // ---------- DRAG & TAP ----------
+  function attachDrag(piece, homeCell){
+    var startX=0,startY=0,dragging=false,moved=false,rect=null;
+    piece.addEventListener("pointerdown",function(e){
+      if(!playing||finished||piece.classList.contains("placed")) return;
+      e.preventDefault(); ac();
+      startX=e.clientX; startY=e.clientY; dragging=true; moved=false;
+      rect=piece.getBoundingClientRect();
+      piece.setPointerCapture && piece.setPointerCapture(e.pointerId);
+    });
+    piece.addEventListener("pointermove",function(e){
+      if(!dragging) return;
+      e.preventDefault();
+      var dx=e.clientX-startX, dy=e.clientY-startY;
+      if(!moved && Math.hypot(dx,dy)>9){
+        moved=true; deselect();
+        piece.classList.add("dragging");
+        piece.style.width=rect.width+"px"; piece.style.height=rect.height+"px";
+        piece.style.left=rect.left+"px"; piece.style.top=rect.top+"px";
+      }
+      if(moved){ piece.style.left=(rect.left+dx)+"px"; piece.style.top=(rect.top+dy)+"px"; highlightSlotAt(e.clientX,e.clientY,piece); }
+    });
+    function endDrag(e){
+      if(!dragging) return; dragging=false;
+      clearHint();
+      if(!moved){ selectPiece(piece); return; }
+      piece.classList.remove("dragging");
+      var slot=slotAt(e.clientX,e.clientY);
+      piece.style.width=""; piece.style.height=""; piece.style.left=""; piece.style.top="";
+      if(slot){ tryPlace(piece, slot, homeCell); }
+    }
+    piece.addEventListener("pointerup",endDrag);
+    piece.addEventListener("pointercancel",function(){ dragging=false; piece.classList.remove("dragging"); piece.style.width="";piece.style.height="";piece.style.left="";piece.style.top=""; clearHint(); });
+  }
+  function slotAt(x,y){
+    var slots=boardPlayer.querySelectorAll(".slot");
+    for(var i=0;i<slots.length;i++){ var r=slots[i].getBoundingClientRect(); if(x>=r.left&&x<=r.right&&y>=r.top&&y<=r.bottom) return slots[i]; }
+    return null;
+  }
+  function highlightSlotAt(x,y,piece){
+    clearHint(); var s=slotAt(x,y); if(s) s.classList.add("hint-pulse");
+  }
+  function clearHint(){ boardPlayer.querySelectorAll(".slot.hint-pulse").forEach(function(s){s.classList.remove("hint-pulse");}); }
+  function deselect(){ if(selectedPiece){ selectedPiece.classList.remove("selected"); selectedPiece=null; } }
+  function selectPiece(piece){
+    if(selectedPiece===piece){ deselect(); return; }
+    deselect(); selectedPiece=piece; piece.classList.add("selected"); beep(520,0.05,"triangle",0.07);
+  }
+  function onSlotTap(slot){
+    if(!playing||finished||!selectedPiece) return;
+    var piece=selectedPiece; deselect();
+    var cell=tray.querySelector('[data-cell="'+piece.dataset.shape+'"]');
+    tryPlace(piece, slot, cell);
+  }
+  function tryPlace(piece, slot, homeCell){
+    attempts++;
+    if(slot.dataset.shape===piece.dataset.shape && !slot.classList.contains("filled")){
+      slot.classList.add("filled");
+      piece.classList.remove("selected"); piece.classList.add("placed");
+      slot.appendChild(piece);
+      playerPlaced++; sndPlace(); updateHUD();
+      if(mode==="online") Room.send("place",{from:Room.myId, shape:parseInt(piece.dataset.shape,10), count:playerPlaced});
+      if(playerPlaced>=25){
+        if(mode==="online") Room.send("finish",{from:Room.myId, count:25, complete:true});
+        endGame("playerComplete");
+      }
+    } else {
+      fails++; sndWrong();
+      piece.classList.add("wrong"); setTimeout(function(){piece.classList.remove("wrong");},320);
+      if(slot.classList.contains("filled")) msg("Ese agujero ya está ocupado.");
+      else msg("Esa forma no va ahí — la pieza rebota a la bandeja.");
+      updateHUD();
+    }
+  }
+  function msg(t){ var el=$("playerMsg"); if(el) el.textContent=t; }
+
+  // ---------- HUD ----------
+  function updateHUD(){
+    $("scorePlayer").textContent=playerPlaced;
+    $("scoreAI").textContent=aiPlaced;
+    $("progPlayer").style.width=(playerPlaced/25*100)+"%";
+    $("progAI").style.width=(aiPlaced/25*100)+"%";
+    $("trayCount").textContent=(25-playerPlaced)+" por colocar";
+    $("statPlaced").textContent=playerPlaced;
+    $("statFails").textContent=fails;
+    $("statAI").textContent=aiPlaced;
+    $("statAcc").textContent=attempts? Math.round((attempts-fails)/attempts*100)+"%":"—";
+    tray.querySelectorAll(".tray-cell").forEach(function(c){ c.classList.toggle("empty", c.children.length===0); });
+    if(mode==="online") renderRanking();
+  }
+  // Clasificación completa: tú + todos los rivales, ordenada por piezas
+  function standings(){
+    var rows=[{id:Room.myId||"me", name:"Tú", count:playerPlaced, color:"#e5484d", me:true}];
+    Object.keys(Room.playersMap).forEach(function(id){
+      var p=Room.playersMap[id];
+      rows.push({id:id, name:p.name, count:p.count, color:p.color, me:false});
+    });
+    rows.sort(function(a,b){ return b.count-a.count || (a.me?-1:b.me?1:a.name.localeCompare(b.name)); });
+    return rows;
+  }
+  function renderRanking(){
+    var el=$("rankList"); if(!el) return;
+    el.innerHTML="";
+    standings().forEach(function(r,i){
+      var li=document.createElement("li");
+      if(r.me) li.className="me";
+      li.innerHTML='<span style="font-weight:900;color:var(--muted)">'+(i+1)+'º</span><span class="pdot" style="background:'+r.color+'"></span><span>'+r.name+'</span><b>'+r.count+' / 25</b>';
+      el.appendChild(li);
+    });
+  }
+  // Tablero final de posiciones: se rellena al acabar la partida
+  function renderFinalRanking(){
+    var el=$("finalRanking"); if(!el) return;
+    if(mode!=="online"){ el.style.display="none"; el.innerHTML=""; return; }
+    var rows=standings();
+    el.innerHTML="";
+    var head=document.createElement("li");
+    head.className="fr-head";
+    head.innerHTML='<span style="flex:1">Tablero de posiciones</span><span>Piezas</span>';
+    el.appendChild(head);
+    rows.forEach(function(r,i){
+      var li=document.createElement("li");
+      if(i===0) li.className="winner";
+      li.innerHTML='<span style="font-weight:900;color:var(--muted);min-width:26px">'+(i+1)+'º</span><span class="pdot" style="background:'+r.color+'"></span><span>'+r.name+(i===0?" — gana":"")+'</span><b>'+r.count+' / 25</b>';
+      el.appendChild(li);
+    });
+    el.style.display="block";
+  }
+  function updateTimer(){
+    $("timerNum").textContent=timeLeft.toFixed(1);
+    $("timerBar").style.width=(timeLeft/GAME_TIME*100)+"%";
+    $("timerNum").classList.toggle("danger", timeLeft<=10.05);
+    $("timerBar").style.background = timeLeft<=10 ? "#ff5a4e" : "var(--ai)";
+  }
+  function applyModeLabels(){
+    $("oppWho").textContent=oppShort();
+    $("oppTitle").textContent= mode==="online" ? "Rivales" : "La IA";
+    $("oppSub").textContent= mode==="online" ? "Cada rival juega a la vez desde su móvil, en su color." : "Juega a la vez en su tablero, con las piezas amarillas.";
+    $("statAILabel").textContent= mode==="online" ? "Líder colocadas" : "IA colocadas";
+    $("statDiff").textContent= mode==="online" ? "Online" : DIFFS[diffKey].label;
+    $("finalOppLabel").textContent= mode==="online" ? "Líder" : "IA";
+    $("boardAI").style.display= mode==="online" ? "none" : "";
+    $("rivalsWrap").style.display= mode==="online" ? "block" : "none";
+  }
+
+  // ---------- AI (solo mode) ----------
+  function scheduleAI(){
+    if(!playing||finished||mode!=="solo") return;
+    var d=DIFFS[diffKey];
+    var delay=Math.max(420, d.mean + (Math.random()*2-1)*d.jitter);
+    aiTimer=setTimeout(function(){
+      if(!playing||finished||mode!=="solo") return;
+      if(Math.random()<d.failChance){
+        $("aiMsg").textContent="¡La IA ha fallado una pieza! Ha perdido unos segundos…";
+      } else {
+        aiPlaceOne();
+      }
+      scheduleAI();
+    }, delay);
+  }
+  function fillOppSlot(shapeId){
+    var slot=boardAI.querySelector('.slot[data-shape="'+shapeId+'"]');
+    if(!slot||slot.classList.contains("filled")) return;
+    slot.classList.add("filled");
+    var p=document.createElement("div"); p.className="piece ai placed"; p.dataset.shape=shapeId;
+    p.innerHTML=svgShape(shapeId);
+    slot.appendChild(p);
+  }
+  function aiPlaceOne(){
+    var empty=Array.prototype.slice.call(boardAI.querySelectorAll(".slot:not(.filled)"));
+    if(!empty.length) return;
+    var slot=empty[Math.floor(Math.random()*empty.length)];
+    fillOppSlot(parseInt(slot.dataset.shape,10));
+    aiPlaced++; updateHUD();
+    var phrases=["La IA ha encajado una "+SHAPES[slot.dataset.shape].name+".","La IA sigue: ya lleva "+aiPlaced+".","La IA no se detiene… "+aiPlaced+" piezas."];
+    $("aiMsg").textContent=phrases[Math.floor(Math.random()*phrases.length)];
+    if(aiPlaced>=25){ endGame("aiComplete"); }
+  }
+  // Rival humano (online): su avance llega por la sala, jugador a jugador
+  function refreshLeader(){
+    var best=0, name=null;
+    Object.keys(Room.playersMap).forEach(function(id){
+      var p=Room.playersMap[id];
+      if(p.count>best){ best=p.count; name=p.name; }
+    });
+    aiPlaced=best; Room.leaderName=name;
+  }
+  function rivalPlaced(fromId, shapeId, count){
+    if(finished) return;
+    var p=Room.playersMap[fromId];
+    if(p){
+      if(typeof count==="number") p.count=Math.max(p.count, Math.min(25,count));
+      else p.count=Math.min(25,p.count+1);
+      fillRivalSlot(fromId, shapeId, p.color);
+      var scoreEl=document.querySelector('.rival-mini[data-player="'+fromId+'"] h3 b');
+      if(scoreEl) scoreEl.textContent=p.count+" / 25";
+    } else {
+      fillOppSlot(shapeId);
+    }
+    refreshLeader(); updateHUD();
+    $("aiMsg").textContent=(p?p.name:"Tu rival")+" ha encajado una "+SHAPES[shapeId].name+"."+(p?" Ya lleva "+p.count+".":"");
+    if(p && p.count>=25){ endGame("aiComplete"); }
+  }
+  // Rellena el mini-tablero de un rival hasta su marca (por si un «place» se perdió)
+  function syncRivalBoard(fromId, target){
+    var p=Room.playersMap[fromId]; if(!p) return;
+    var wrap=document.querySelector('.rival-mini[data-player="'+fromId+'"]');
+    if(!wrap) return;
+    var missing=[];
+    wrap.querySelectorAll(".slot:not(.filled)").forEach(function(s){ missing.push(parseInt(s.dataset.shape,10)); });
+    for(var i=0;i<missing.length && p.count+i<target;i++) fillRivalSlot(fromId, missing[i], p.color);
+    p.count=Math.max(p.count, Math.min(25,target));
+    var scoreEl=wrap.querySelector("h3 b"); if(scoreEl) scoreEl.textContent=p.count+" / 25";
+  }
+  function fillRivalSlot(fromId, shapeId, color){
+    var wrap=document.querySelector('.rival-mini[data-player="'+fromId+'"]');
+    if(!wrap) { fillOppSlot(shapeId); return; }
+    var slot=wrap.querySelector('.slot[data-shape="'+shapeId+'"]');
+    if(!slot||slot.classList.contains("filled")) return;
+    slot.classList.add("filled");
+    var p=document.createElement("div"); p.className="piece placed"; p.dataset.shape=shapeId;
+    p.style.color=color||"#f5a524";
+    p.innerHTML=svgShape(shapeId);
+    slot.appendChild(p);
+  }
+  // Un mini-tablero por rival, con su color y su marcador
+  function buildRivalBoards(){
+    var wrap=$("rivalBoards"); if(!wrap) return;
+    wrap.innerHTML="";
+    Object.keys(Room.playersMap).forEach(function(id){
+      var p=Room.playersMap[id];
+      var box=document.createElement("div"); box.className="rival-mini"; box.dataset.player=id;
+      var h=document.createElement("h3");
+      h.innerHTML='<span class="pdot" style="background:'+p.color+'"></span><span>'+p.name+'</span><b>'+p.count+' / 25</b>';
+      box.appendChild(h);
+      var b=document.createElement("div"); b.className="board mini";
+      boardOrder.forEach(function(shapeId){
+        var s=document.createElement("div"); s.className="slot"; s.dataset.shape=shapeId;
+        s.innerHTML='<span style="display:grid;place-items:center;width:100%;height:100%">'+svgShape(shapeId)+'</span>';
+        s.querySelector("svg").classList.add("hole-shape");
+        s.querySelector("svg").style.width="92%"; s.querySelector("svg").style.height="92%";
+        b.appendChild(s);
+      });
+      box.appendChild(b);
+      wrap.appendChild(box);
+    });
+    renderRanking();
+  }
+
+  // ---------- GAME FLOW ----------
+  function resetGame(seed){
+    playing=false; finished=false; clearInterval(timerId); clearTimeout(aiTimer);
+    timeLeft=GAME_TIME; playerPlaced=0; aiPlaced=0; fails=0; attempts=0; lastTickSec=99; deselect();
+    Object.keys(Room.playersMap).forEach(function(id){ Room.playersMap[id].count=0; });
+    Room.leaderName=null;
+    var fr=$("finalRanking"); if(fr){ fr.style.display="none"; fr.innerHTML=""; }
+    buildBoards(seed==null?null:seed);
+    if(mode==="online") buildRivalBoards();
+    updateHUD(); updateTimer(); applyModeLabels();
+    $("aiMsg").textContent= mode==="online" ? "Esperando a que empiece la partida online…" : "La IA está esperando a que empiece la partida…";
+    msg("Pulsa «Empezar partida» y encaja las 25 formas rojas. Si fallas, la pieza rebota.");
+    updateStartButton();
+  }
+  function closeSettings(){
+    $("settingsPanel").classList.remove("show");
+    $("btnSettings").classList.remove("open");
+    $("btnSettings").setAttribute("aria-expanded","false");
+  }
+  function updateStartButton(){
+    var b=$("btnStart");
+    if(!b) return; // el botón superior se eliminó: el marcador va integrado en la barra
+    if(mode==="online"){
+      if(!Room.code){ b.disabled=true; b.textContent="Crea o únete a una sala"; return; }
+      if(Room.amHost){ b.disabled = Room.players<2 || playing; b.textContent = playing ? "Jugando…" : (Room.players<2 ? "Esperando jugadores…" : "Empezar partida"); }
+      else { b.disabled=true; b.textContent = playing ? "Jugando…" : "Espera al anfitrión"; }
+    } else {
+      b.disabled=playing; b.textContent= playing ? "Jugando…" : (finished ? "Jugar otra vez" : "Empezar partida");
+    }
+  }
+  function beginCountdown(onDone){
+    var cd=$("countdown"), num=$("countNum"); cd.classList.add("show");
+    var steps=["3","2","1","¡A ENCAJAR!"]; var i=0;
+    beep(440,0.1,"triangle",0.12);
+    num.textContent=steps[0];
+    var iv=setInterval(function(){
+      i++;
+      if(i<steps.length){ num.textContent=steps[i]; beep(i===3?880:440,0.12,"triangle",0.13); }
+      else{ clearInterval(iv); cd.classList.remove("show"); onDone(); }
+    },650);
+  }
+  function startClock(){
+    playing=true; updateStartButton();
+    msg("¡Vamos! Arrastra cada pieza a su agujero.");
+    $("aiMsg").textContent= mode==="online" ? "¡Tus rivales ya están encajando piezas!" : "¡La IA ya está encajando piezas!";
+    var last=performance.now();
+    timerId=setInterval(function(){
+      var now=performance.now(); var dt=(now-last)/1000; last=now;
+      timeLeft=Math.max(0,timeLeft-dt); updateTimer();
+      var sec=Math.ceil(timeLeft);
+      if(sec!==lastTickSec){ lastTickSec=sec; if(sec<=10&&sec>0) sndTick(); }
+      if(timeLeft<=0){
+        if(mode==="online") Room.send("finish",{from:Room.myId, count:playerPlaced, complete:false});
+        endGame("time");
+      }
+    },50);
+    if(mode==="solo") scheduleAI();
+  }
+  function startGame(){
+    if(playing) return;
+    if(mode==="online"){ Room.hostStart(); return; }
+    resetGame(null);
+    closeSettings();
+    $("overlay").classList.remove("show");
+    $("finalScore").style.display="none"; $("popWord").style.display="none"; $("finalRanking").style.display="none";
+    beginCountdown(startClock);
+  }
+  // Partida online: la siembra hace que todos los móviles generen el mismo tablero
+  function startOnlineMatch(matchId, seed){
+    resetGame(seed);
+    closeSettings();
+    $("overlay").classList.remove("show");
+    $("finalScore").style.display="none"; $("popWord").style.display="none"; $("finalRanking").style.display="none";
+    Room.currentMatch=matchId;
+    beginCountdown(startClock);
+  }
+  function popBoard(board){
+    board.classList.remove("shake"); void board.offsetWidth; board.classList.add("shake");
+    board.querySelectorAll(".piece.placed").forEach(function(p){
+      var tx=(Math.random()*2-1)*260, ty=-(60+Math.random()*260), rot=(Math.random()*2-1)*340;
+      p.classList.add("pop-fly");
+      p.style.transform="translate("+tx+"px,"+ty+"px) rotate("+rot+"deg)";
+      p.style.opacity="0";
+    });
+  }
+  function endGame(reason){
+    if(finished) return; finished=true; playing=false;
+    clearInterval(timerId); clearTimeout(aiTimer); deselect();
+    var title,text, opp=oppName();
+    if(reason==="playerComplete"){
+      title="¡PERFECTO!"; text= mode==="online"
+        ? "Has encajado las 25 piezas con "+timeLeft.toFixed(1)+" segundos de sobra. El mejor de tus rivales se ha quedado en "+aiPlaced+". Abajo tienes el tablero de posiciones."
+        : "Has encajado las 25 piezas con "+timeLeft.toFixed(1)+" segundos de sobra. "+opp+" se ha quedado en "+aiPlaced+". Ni ha olido el ¡POP!.";
+      sndWin();
+    } else if(reason==="aiComplete"){
+      var winnerName= (mode==="online" && Room.winnerId && Room.playersMap[Room.winnerId]) ? Room.playersMap[Room.winnerId].name : opp;
+      title= mode==="online" ? winnerName+" ha llegado antes" : "La IA ha llegado antes";
+      text=winnerName+" ha completado sus 25 piezas. Tú llevabas "+playerPlaced+". La bandeja salta igualmente… ¡POP! Abajo tienes el tablero de posiciones."; sndPop(); popBoard(boardPlayer); setTimeout(function(){popBoard(boardAI);},150);
+    } else {
+      sndPop(); popBoard(boardPlayer); setTimeout(function(){popBoard(boardAI);},150);
+      if(playerPlaced>aiPlaced){ title="¡POP! — pero ganas tú"; text="Se acabó el tiempo y la bandeja ha saltado, pero tenías más piezas encajadas: "+playerPlaced+" frente a "+aiPlaced+" de "+(mode==="online"?"el mejor rival":"la IA")+". Abajo tienes el tablero de posiciones."; setTimeout(sndWin,500); }
+      else if(aiPlaced>playerPlaced){ title= mode==="online" ? "¡POP! Gana "+(Room.leaderName||"un rival") : "¡POP! Gana la IA"; text="La bandeja ha saltado a los "+GAME_TIME+" segundos. "+opp+" llevaba "+aiPlaced+" piezas y tú "+playerPlaced+". ¡La próxima cae! Abajo tienes el tablero de posiciones."; }
+      else { title="¡POP! Empate"; text="Tiempo agotado y empate a "+playerPlaced+" piezas en cabeza. La bandeja ha saltado para todos. Abajo tienes el tablero de posiciones."; }
+    }
+    $("finalPlayer").textContent=playerPlaced;
+    $("finalAI").textContent=aiPlaced;
+    $("finalOppLabel").textContent= mode==="online" ? "Líder" : "IA";
+    $("finalScore").style.display="flex";
+    renderFinalRanking(); // TABLERO DE POSICIONES al acabar (solo online; en solo se oculta)
+    $("modalTitle").textContent=title;
+    $("modalText").textContent=text;
+    $("popWord").style.display=(reason==="playerComplete"?"none":"block");
+    // En el resultado: solo -> revancha directa; online -> revancha por la sala
+    if(mode==="online"){
+      $("soloPanel").style.display="none"; $("onlinePanel").style.display="block";
+      setModeTab("online");
+      $("lobbyStatus").className="lobby-status"+(Room.players>=2?" ok":"");
+      $("lobbyStatus").textContent= Room.amHost
+        ? (Room.players>=2 ? "Partida terminada. Mira el tablero de posiciones y pulsa «Empezar partida» para la revancha." : "Los demás han salido de la sala.")
+        : "Partida terminada. El anfitrión puede lanzar la revancha desde aquí.";
+      $("btnLobbyStart").textContent="Revancha — empezar otra";
+    } else {
+      $("btnModalStart").textContent="Jugar otra partida";
+    }
+    setTimeout(function(){ $("overlay").classList.add("show"); }, reason==="playerComplete"?450:1100);
+    msg(title+" — "+text);
+    updateStartButton();
+  }
+
+  // ---------- ONLINE: salas con código (Supabase Realtime: Presence + Broadcast, sin guardar datos) ----------
+  var SB_URL="https://zjcthmglltdrefwnflqm.supabase.co", SB_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpqY3RobWdsbHRkcmVmd25mbHFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwODA5OTMsImV4cCI6MjEwNzY1Njk5M30.hWorZSMT1C5dMVXYAaR2_fuduVwit4uJ9qrPGXcBk7o";
+  var sbClient=null;
+  function sb(){
+    if(!window.supabase||!window.supabase.createClient) return null;
+    if(!sbClient){ try{ sbClient=window.supabase.createClient(SB_URL,SB_ANON_KEY); }catch(e){ return null; } }
+    return sbClient;
+  }
+  var Room={
+    channel:null, code:null, myId:null, amHost:false, players:0, match:0, currentMatch:0, connected:false,
+    playersMap:{}, leaderName:null,
+    send:function(event,payload){
+      if(!this.channel||!this.connected) return;
+      try{ this.channel.send({type:"broadcast",event:event,payload:payload||{}}); }catch(e){}
+    },
+    hostStart:function(){
+      if(mode!=="online"||!this.amHost||playing) return;
+      if(this.players<2){ lobbyStatus("Todavía no hay nadie más en la sala. Pásales el código "+this.code+" y espera a que se unan (de 2 a 8 jugadores).",""); return; }
+      this.match++;
+      var seed=hashStr(this.code+"#"+this.match);
+      var payload={match:this.match, seed:seed};
+      this.send("game_start",payload);
+      var self=this;
+      setTimeout(function(){ self.send("game_start",payload); },1000); // reenvío anti-pérdida; el receptor descarta duplicados por nº de partida
+      startOnlineMatch(this.match, seed); // el canal no devuelve tus propios mensajes: el anfitrión se aplica el inicio a sí mismo
+    }
+  };
+  function lobbyStatus(text,kind){
+    var el=$("lobbyStatus"); el.textContent=text; el.className="lobby-status"+(kind?" "+kind:"");
+  }
+  function genCode(){
+    var chars="ABCDEFGHJKMNPQRSTUVWXYZ23456789", out="";
+    for(var i=0;i<4;i++) out+=chars[Math.floor(Math.random()*chars.length)];
+    return out;
+  }
+  function joinRoom(code, asHost){
+    var client=sb();
+    if(!client){ lobbyShow(); lobbyStatus("No se ha podido cargar la conexión online. Revisa tu internet y recarga la página.","err"); return; }
+    leaveRoom(true);
+    Room.code=code; Room.amHost=asHost; Room.match=0; Room.currentMatch=0; Room.connected=false;
+    Room.playersMap={}; Room.leaderName=null; Room.winnerId=null;
+    Room.myId="p"+Math.random().toString(36).slice(2,10);
+    lobbyShow();
+    $("roomCodeBig").textContent=code;
+    // Botón de WhatsApp: lleva el código y los pasos, sin enlaces raros
+    var waText="¡Te reto a Perfect! Abre el juego, elige «Online · hasta 8», pulsa «Unirme a la sala» y escribe este código: "+code+" — cabemos hasta 8 jugadores.";
+    $("btnWhats").href="https://wa.me/?text="+encodeURIComponent(waText);
+    lobbyStatus("Conectando con la sala "+code+"…","");
+    var ch=client.channel("perfect-"+code.toLowerCase(),{config:{broadcast:{self:false},presence:{key:Room.myId}}});
+    Room.channel=ch;
+    ch.on("presence",{event:"sync"},function(){ syncLobby(); });
+    ch.on("presence",{event:"leave"},function(){
+      if(playing&&mode==="online") $("aiMsg").textContent="Un jugador se ha desconectado de la sala.";
+    });
+    ch.on("broadcast",{event:"game_start"},function(msg){
+      var p=msg.payload||{};
+      if(!p.match||p.match===Room.currentMatch) return; // duplicado del reenvío
+      if(Room.amHost) return; // el anfitrión ya se aplicó su propio inicio
+      startOnlineMatch(p.match, p.seed);
+    });
+    ch.on("broadcast",{event:"place"},function(msg){
+      var p=msg.payload||{};
+      if(typeof p.shape==="number") rivalPlaced(p.from, p.shape, p.count);
+    });
+    ch.on("broadcast",{event:"finish"},function(msg){
+      var p=msg.payload||{};
+      if(p.from && typeof p.count==="number"){
+        // Rellena el mini-tablero de ese jugador hasta su marca final si algún «place» se perdió
+        syncRivalBoard(p.from, p.count); refreshLeader(); updateHUD();
+      }
+      if(finished) return;
+      if(p.complete){
+        Room.winnerId=p.from||null;
+        endGame("aiComplete");
+      }
+      else { endGame("time"); }
+    });
+    ch.subscribe(function(status){
+      if(status==="SUBSCRIBED"){
+        Room.connected=true;
+        ch.track({id:Room.myId, host:Room.amHost, joinedAt:Date.now()});
+        syncLobby();
+      } else if(status==="CHANNEL_ERROR"||status==="TIMED_OUT"||status==="CLOSED"){
+        Room.connected=false;
+        lobbyStatus("No se pudo conectar con la sala. Puede ser un corte de red: sal y vuelve a entrar.","err");
+      }
+    });
+  }
+  function syncLobby(){
+    if(!Room.channel) return;
+    var state=Room.channel.presenceState();
+    // Orden estable de claves: el mismo en todos los móviles, así cada
+    // jugador recibe el mismo nombre (Jugador N) y el mismo color.
+    var keys=Object.keys(state).sort();
+    var count=keys.length, hostThere=false, earliest=null;
+    keys.forEach(function(k){
+      state[k].forEach(function(p){
+        if(p.host) hostThere=true;
+        if(!earliest || (p.joinedAt||0)<(earliest.joinedAt||0)) earliest=p;
+      });
+    });
+    // Sala llena: si mi posición en el orden pasa de 8, no entro
+    var myIndex=keys.indexOf(Room.myId);
+    if(myIndex>=MAX_PLAYERS){
+      lobbyStatus("Esta sala ya está llena: hay "+MAX_PLAYERS+" jugadores dentro. Crea otra sala con otro código.","err");
+      $("btnLobbyStart").disabled=true;
+      return;
+    }
+    // Relevo de anfitrión: si quien creó la sala se va, pasa a serlo
+    // el jugador que entró antes, para que la sala no quede muerta.
+    if(!hostThere && earliest && earliest.id===Room.myId && !Room.amHost){
+      Room.amHost=true;
+      try{ Room.channel.track({id:Room.myId, host:true, joinedAt:earliest.joinedAt||Date.now()}); }catch(e){}
+      hostThere=true;
+    }
+    var was=Room.players; Room.players=Math.min(count,MAX_PLAYERS);
+    keys=keys.slice(0,MAX_PLAYERS); // los que pasen de 8 no cuentan como jugadores
+    // Reconstruye el mapa de rivales conservando sus piezas de la partida en curso
+    var oldMap=Room.playersMap, newMap={}, rivalIdx=0;
+    keys.forEach(function(k,i){
+      if(k===Room.myId) return;
+      var prev=oldMap[k];
+      newMap[k]={ name:"Jugador "+(i+1), color:RIVAL_COLORS[rivalIdx%RIVAL_COLORS.length], count:prev?prev.count:0 };
+      rivalIdx++;
+    });
+    var rosterChanged=(Object.keys(newMap).length!==Object.keys(oldMap).length) ||
+      Object.keys(newMap).some(function(k){ return !oldMap[k]; });
+    Room.playersMap=newMap;
+    refreshLeader();
+    // Lista de jugadores del vestíbulo (n/8)
+    var lp=$("lobbyPlayers");
+    if(lp){
+      lp.innerHTML="";
+      keys.slice(0,MAX_PLAYERS).forEach(function(k,i){
+        var meta=(state[k]&&state[k][0])||{};
+        var chip=document.createElement("span");
+        chip.className="lobby-player"+(k===Room.myId?" me":"");
+        var color= k===Room.myId ? "#e5484d" : (newMap[k]?newMap[k].color:"#999");
+        chip.innerHTML='<span class="pdot" style="background:'+color+'"></span><span>'+(k===Room.myId?"Tú":"Jugador "+(i+1))+'</span>'+(meta.host?'<span class="host-tag">ANFITRIÓN</span>':"");
+        lp.appendChild(chip);
+      });
+    }
+    if(Room.players>=2){
+      lobbyStatus(Room.amHost ? "Sois "+Room.players+" de "+MAX_PLAYERS+" en la sala. Cuando quieras, pulsa «Empezar partida»." : "¡Estás dentro! Sois "+Room.players+" de "+MAX_PLAYERS+". El anfitrión lanzará la partida.","ok");
+    } else if(Room.amHost){
+      lobbyStatus("Sala creada (1 de "+MAX_PLAYERS+"). Esperando a tus amigos… Pásales el código "+Room.code+" — por WhatsApp con el botón verde.","");
+    } else {
+      lobbyStatus(hostThere ? "Conectado. Esperando a que el anfitrión empiece…" : "Estás en la sala, pero el anfitrión no aparece. Comprueba que el código es el suyo.","");
+    }
+    $("btnLobbyStart").disabled = !(Room.amHost && Room.players>=2) || playing;
+    $("btnLobbyStart").textContent = Room.amHost ? (Room.players>=2 ? "Empezar partida ("+Room.players+" jugadores)" : "Esperando jugadores…") : "El anfitrión empieza la partida";
+    if(was>count && playing){ $("aiMsg").textContent="Un jugador ha salido de la sala a mitad de partida. La partida sigue con los demás."; }
+    if(rosterChanged && !playing && !finished){ buildRivalBoards(); }
+    if(playing) renderRanking();
+    updateStartButton();
+  }
+  function lobbyShow(){
+    $("lobbyHome").style.display="none"; $("lobbyRoom").style.display="block";
+  }
+  function leaveRoom(silent){
+    if(Room.channel){
+      try{ Room.channel.untrack(); }catch(e){}
+      if(sbClient){ try{ sbClient.removeChannel(Room.channel); }catch(e){} }
+    }
+    Room.channel=null; Room.code=null; Room.players=0; Room.connected=false; Room.amHost=false; Room.currentMatch=0;
+    Room.playersMap={}; Room.leaderName=null; Room.winnerId=null;
+    var lpEl=$("lobbyPlayers"); if(lpEl) lpEl.innerHTML="";
+    if(!silent){
+      $("lobbyHome").style.display="block"; $("lobbyRoom").style.display="none";
+      if(playing||finished){ resetGame(null); }
+      updateStartButton();
+    }
+  }
+
+  // ---------- MODE TABS ----------
+  function setModeTab(m){
+    document.querySelectorAll("#modeSeg button").forEach(function(b){ b.classList.toggle("active", b.dataset.mode===m); });
+  }
+  function setMode(m){
+    if(m===mode) { setModeTab(m); return; }
+    mode=m; setModeTab(m);
+    $("soloPanel").style.display= m==="solo" ? "block" : "none";
+    $("onlinePanel").style.display= m==="online" ? "block" : "none";
+    if(m==="solo"){ leaveRoom(true); $("lobbyHome").style.display="block"; $("lobbyRoom").style.display="none"; }
+    applyModeLabels(); resetGame(null);
+    $("aiMsg").textContent= m==="online" ? "Crea una sala o únete con un código para jugar contra un amigo." : "La IA está esperando a que empiece la partida…";
+    updateStartButton();
+  }
+
+  // ---------- SCREEN LOCK: ningún gesto fuera de los controles mueve la pantalla ----------
+  document.addEventListener("touchmove",function(e){
+    if(e.target.closest && e.target.closest(".modal,.settings-panel,input,textarea")) return;
+    e.preventDefault();
+  },{passive:false});
+  document.addEventListener("gesturestart",function(e){ e.preventDefault(); });
+  document.addEventListener("dblclick",function(e){ if(!e.target.closest||!e.target.closest("input")) e.preventDefault(); });
+
+  // ---------- WIRING ----------
+  $("btnSettings").addEventListener("click",function(e){
+    e.stopPropagation();
+    var open=$("settingsPanel").classList.toggle("show");
+    this.classList.toggle("open",open);
+    this.setAttribute("aria-expanded",open?"true":"false");
+  });
+  $("settingsPanel").addEventListener("click",function(e){ e.stopPropagation(); });
+  document.addEventListener("click",function(){ closeSettings(); });
+  var btnStartEl=$("btnStart");
+  if(btnStartEl) btnStartEl.addEventListener("click",function(){
+    if(mode==="online"){
+      if(Room.code){ Room.hostStart(); }
+      else { $("overlay").classList.add("show"); }
+      return;
+    }
+    startGame();
+  });
+  $("btnModalStart").addEventListener("click",startGame);
+  $("btnReset").addEventListener("click",function(){ $("overlay").classList.remove("show"); resetGame(null); });
+  $("btnSound").addEventListener("click",function(){ soundOn=!soundOn; document.getElementById("soundLabel").textContent=soundOn?"Sonido":"Silencio"; this.querySelectorAll(".snd-waves").forEach(function(w){ w.style.opacity=soundOn?"1":"0.25"; }); this.setAttribute("aria-label",soundOn?"Sonido activado":"Sonido desactivado"); if(soundOn) beep(700,0.07,"triangle",0.1); });
+  document.querySelectorAll("#diffSeg button").forEach(function(b){
+    b.addEventListener("click",function(){
+      document.querySelectorAll("#diffSeg button").forEach(function(x){x.classList.remove("active");});
+      b.classList.add("active"); diffKey=b.dataset.diff; applyModeLabels();
+      if(!playing&&mode==="solo") $("aiMsg").textContent="Dificultad de la IA: "+DIFFS[diffKey].label+". Pulsa «Empezar partida».";
+    });
+  });
+  document.querySelectorAll("#modeSeg button").forEach(function(b){
+    b.addEventListener("click",function(){ setMode(b.dataset.mode); });
+  });
+  $("btnCreateRoom").addEventListener("click",function(){ joinRoom(genCode(), true); });
+  $("btnJoinRoom").addEventListener("click",function(){
+    var code=($("joinCode").value||"").toUpperCase().replace(/[^A-Z0-9]/g,"");
+    if(code.length!==4){ $("joinCode").focus(); $("joinCode").style.borderColor="#e8322a"; setTimeout(function(){ $("joinCode").style.borderColor=""; },1200); return; }
+    joinRoom(code, false);
+  });
+  $("joinCode").addEventListener("keydown",function(e){ if(e.key==="Enter") $("btnJoinRoom").click(); });
+  $("btnCopyCode").addEventListener("click",function(){
+    var code=Room.code||""; if(!code) return;
+    var done=function(){ $("copyLabel").textContent="¡Código copiado!"; setTimeout(function(){ $("copyLabel").textContent="Copiar código"; },1800); };
+    if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(code).then(done,done); } else { done(); }
+  });
+  $("btnLobbyStart").addEventListener("click",function(){ Room.hostStart(); });
+  $("btnLeaveRoom").addEventListener("click",function(){ leaveRoom(false); });
+
+  resetGame(null);
+})();
+</script>
+</body>
+</html>
