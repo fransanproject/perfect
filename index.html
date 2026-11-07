@@ -950,6 +950,10 @@ body{background:var(--bg)}
           <input id="joinCode" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" maxlength="4" placeholder="CÓDIGO" aria-label="Código de sala" />
           <button class="btn btn-ghost" id="btnJoinRoom" style="font-size:15px;padding:10px 18px">Unirme a la sala</button>
         </div>
+        <div class="online-actions" style="margin-top:2px">
+          <button class="btn btn-ghost" id="btnRejoin" style="display:none;font-size:14px;padding:10px 18px">Volver a la sala <b id="rejoinCode"></b></button>
+        </div>
+        <div class="lobby-status" id="lobbyHomeStatus" style="display:none"></div>
       </div>
       <div id="lobbyRoom" style="display:none">
         <div style="font-weight:900;font-size:11px;letter-spacing:.08em;color:var(--muted)">CÓDIGO DE TU SALA — PÁSASELO A TUS AMIGOS (HASTA 8 JUGADORES)</div>
@@ -1482,9 +1486,56 @@ body{background:var(--bg)}
     if(!sbClient){ try{ sbClient=window.supabase.createClient(SB_URL,SB_ANON_KEY); }catch(e){ return null; } }
     return sbClient;
   }
+  // La librería llega por CDN: si el CDN principal falla o va lento
+  // (pasó en la práctica: la página se quedaba sin conexión online y
+  // «Crear sala» no creaba nada), se intenta una segunda fuente de la
+  // MISMA librería y se espera a que esté antes de dar un error.
+  var sbFallbackTried=false;
+  function ensureSb(cb){
+    var done=false;
+    function finish(c){ if(done) return; done=true; cb(c); }
+    if(sb()){ finish(sb()); return; }
+    if(!sbFallbackTried){
+      sbFallbackTried=true;
+      try{
+        var s=document.createElement("script");
+        s.src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.min.js";
+        s.onload=function(){ ensureSb(finish); };
+        s.onerror=function(){ ensureSb(finish); };
+        document.head.appendChild(s);
+      }catch(e){}
+    }
+    var tries=0;
+    var iv=setInterval(function(){
+      tries++;
+      if(sb()){ clearInterval(iv); finish(sb()); }
+      else if(tries>=40){ clearInterval(iv); finish(null); } // ~8 s esperando la librería
+    },200);
+  }
+  function homeStatus(text,kind){
+    var el=$("lobbyHomeStatus"); if(!el) return;
+    if(!text){ el.style.display="none"; el.textContent=""; return; }
+    el.style.display="block"; el.textContent=text; el.className="lobby-status"+(kind?" "+kind:"");
+  }
+  // La sala vive solo en la conexión: si el móvil descarta la página
+  // (típico al saltar a WhatsApp a compartir el código), se guarda el
+  // código SOLO en la sesión de esta pestaña para poder volver a la
+  // misma sala al regresar. No es ningún dato del usuario: es el
+  // estado efímero de la partida en curso.
+  var ROOM_STORE_KEY="perfectRoomV1";
+  function storeRoom(){
+    try{
+      if(Room.code) sessionStorage.setItem(ROOM_STORE_KEY, JSON.stringify({code:Room.code, host:!!Room.amHost}));
+      else sessionStorage.removeItem(ROOM_STORE_KEY);
+    }catch(e){}
+  }
+  function storedRoom(){
+    try{ var v=sessionStorage.getItem(ROOM_STORE_KEY); return v?JSON.parse(v):null; }catch(e){ return null; }
+  }
   var Room={
     channel:null, code:null, myId:null, amHost:false, players:0, match:0, currentMatch:0, connected:false,
     playersMap:{}, leaderName:null,
+    retries:0, retryTimer:null, watchdog:null, joining:false, leaving:false, joinedAt:0, hostSeen:false, hadHost:false,
     send:function(event,payload){
       if(!this.channel||!this.connected) return;
       try{ this.channel.send({type:"broadcast",event:event,payload:payload||{}}); }catch(e){}
@@ -1509,57 +1560,132 @@ body{background:var(--bg)}
     for(var i=0;i<4;i++) out+=chars[Math.floor(Math.random()*chars.length)];
     return out;
   }
-  function joinRoom(code, asHost){
-    var client=sb();
-    if(!client){ lobbyShow(); lobbyStatus("No se ha podido cargar la conexión online. Revisa tu internet y recarga la página.","err"); return; }
-    leaveRoom(true);
-    Room.code=code; Room.amHost=asHost; Room.match=0; Room.currentMatch=0; Room.connected=false;
-    Room.playersMap={}; Room.leaderName=null; Room.winnerId=null;
-    Room.myId="p"+Math.random().toString(36).slice(2,10);
+  // ¿Hay un anfitrión presente de verdad en el canal? Un canal de
+  // Realtime se suscribe «bien» aunque la sala no exista (es efímero:
+  // quien entra lo crea vacío), así que sin esta comprobación el
+  // invitado se quedaba esperando para siempre en una sala fantasma.
+  function hostPresent(){
+    if(!Room.channel) return false;
+    try{
+      var st=Room.channel.presenceState();
+      return Object.keys(st).some(function(k){ return (st[k]||[]).some(function(p){ return !!p.host; }); });
+    }catch(e){ return false; }
+  }
+  // Reintento de conexión: antes, un solo TIMED_OUT o CHANNEL_ERROR
+  // (nada raro en datos móviles) dejaba la sala muerta con un texto
+  // de error. Ahora se reintenta solo hasta 3 veces recreando el canal.
+  function scheduleRetry(){
+    if(Room.leaving||!Room.code||Room.retryTimer) return;
+    Room.retries++;
+    if(Room.retries>3){
+      Room.joining=false;
+      lobbyStatus("No se ha podido conectar con la sala tras varios intentos. Revisa tu conexión, sal de la sala y vuelve a intentarlo.","err");
+      return;
+    }
+    lobbyStatus("Se ha cortado la conexión con la sala. Reconectando… (intento "+Room.retries+" de 3)","");
+    var code=Room.code, host=Room.amHost;
+    Room.retryTimer=setTimeout(function(){
+      Room.retryTimer=null;
+      joinRoom(code, host, true); // isRetry: joinRoom conserva el nº de partida
+    }, 1600*Room.retries);
+  }
+  function joinRoom(code, asHost, isRetry){
+    if(Room.joining) return;
+    Room.joining=true; Room.leaving=false;
+    if(!isRetry){ Room.retries=0; homeStatus(""); }
+    if(Room.retryTimer){ clearTimeout(Room.retryTimer); Room.retryTimer=null; }
+    if(Room.watchdog){ clearTimeout(Room.watchdog); Room.watchdog=null; }
     lobbyShow();
     $("roomCodeBig").textContent=code;
-    // Botón de WhatsApp: lleva el código y los pasos, sin enlaces raros
-    var waText="¡Te reto a Perfect! Abre el juego, elige «Online · hasta 8», pulsa «Unirme a la sala» y escribe este código: "+code+" — cabemos hasta 8 jugadores.";
-    $("btnWhats").href="https://wa.me/?text="+encodeURIComponent(waText);
-    lobbyStatus("Conectando con la sala "+code+"…","");
-    var ch=client.channel("perfect-"+code.toLowerCase(),{config:{broadcast:{self:false},presence:{key:Room.myId}}});
-    Room.channel=ch;
-    ch.on("presence",{event:"sync"},function(){ syncLobby(); });
-    ch.on("presence",{event:"leave"},function(){
-      if(playing&&mode==="online") $("aiMsg").textContent="Un jugador se ha desconectado de la sala.";
-    });
-    ch.on("broadcast",{event:"game_start"},function(msg){
-      var p=msg.payload||{};
-      if(!p.match||p.match===Room.currentMatch) return; // duplicado del reenvío
-      if(Room.amHost) return; // el anfitrión ya se aplicó su propio inicio
-      startOnlineMatch(p.match, p.seed);
-    });
-    ch.on("broadcast",{event:"place"},function(msg){
-      var p=msg.payload||{};
-      if(typeof p.shape==="number") rivalPlaced(p.from, p.shape, p.count);
-    });
-    ch.on("broadcast",{event:"finish"},function(msg){
-      var p=msg.payload||{};
-      if(p.from && typeof p.count==="number"){
-        // Rellena el mini-tablero de ese jugador hasta su marca final si algún «place» se perdió
-        syncRivalBoard(p.from, p.count); refreshLeader(); updateHUD();
+    lobbyStatus(isRetry ? "Reconectando con la sala "+code+"…" : "Conectando con la sala "+code+"…","");
+    ensureSb(function(client){
+      if(!client){
+        Room.joining=false;
+        $("lobbyHome").style.display="block"; $("lobbyRoom").style.display="none";
+        homeStatus("No se ha podido cargar la conexión online (la librería de red no ha llegado). Revisa tu internet y vuelve a intentarlo.","err");
+        return;
       }
-      if(finished) return;
-      if(p.complete){
-        Room.winnerId=p.from||null;
-        endGame("aiComplete");
-      }
-      else { endGame("time"); }
-    });
-    ch.subscribe(function(status){
-      if(status==="SUBSCRIBED"){
-        Room.connected=true;
-        ch.track({id:Room.myId, host:Room.amHost, joinedAt:Date.now()});
-        syncLobby();
-      } else if(status==="CHANNEL_ERROR"||status==="TIMED_OUT"||status==="CLOSED"){
-        Room.connected=false;
-        lobbyStatus("No se pudo conectar con la sala. Puede ser un corte de red: sal y vuelve a entrar.","err");
-      }
+      if(Room.leaving){ Room.joining=false; return; } // el usuario salió mientras cargaba
+      leaveRoom(true);
+      Room.code=code; Room.amHost=asHost; Room.connected=false;
+      if(!isRetry){ Room.match=0; Room.currentMatch=0; Room.hadHost=false; } // al reconectar se conserva la numeración: si volviera a 1, los invitados descartarían el siguiente inicio como duplicado
+      Room.playersMap={}; Room.leaderName=null; Room.winnerId=null; Room.hostSeen=false;
+      Room.joinedAt=Date.now();
+      Room.myId="p"+Math.random().toString(36).slice(2,10);
+      lobbyShow();
+      $("roomCodeBig").textContent=code;
+      storeRoom();
+      // Botón de WhatsApp: lleva el código y los pasos, sin enlaces raros
+      var waText="¡Te reto a Perfect! Abre el juego, elige «Online · hasta 8», pulsa «Unirme a la sala» y escribe este código: "+code+" — cabemos hasta 8 jugadores.";
+      $("btnWhats").href="https://wa.me/?text="+encodeURIComponent(waText);
+      lobbyStatus(isRetry ? "Reconectando con la sala "+code+"…" : "Conectando con la sala "+code+"…","");
+      var ch=client.channel("perfect-"+code.toLowerCase(),{config:{broadcast:{self:false},presence:{key:Room.myId}}});
+      Room.channel=ch;
+      ch.on("presence",{event:"sync"},function(){ if(ch===Room.channel) syncLobby(); });
+      ch.on("presence",{event:"leave"},function(){
+        if(playing&&mode==="online") $("aiMsg").textContent="Un jugador se ha desconectado de la sala.";
+      });
+      ch.on("broadcast",{event:"game_start"},function(msg){
+        var p=msg.payload||{};
+        if(!p.match||p.match===Room.currentMatch) return; // duplicado del reenvío
+        if(Room.amHost) return; // el anfitrión ya se aplicó su propio inicio
+        startOnlineMatch(p.match, p.seed);
+      });
+      ch.on("broadcast",{event:"place"},function(msg){
+        var p=msg.payload||{};
+        if(typeof p.shape==="number") rivalPlaced(p.from, p.shape, p.count);
+      });
+      ch.on("broadcast",{event:"hello"},function(){
+        // Alguien acaba de entrar: el anfitrión se anuncia y refresca
+        // su presencia para que el recién llegado vea la sala al momento.
+        if(Room.amHost && Room.connected){
+          try{ ch.track({id:Room.myId, host:true, joinedAt:Room.joinedAt}); }catch(e){}
+          Room.send("room_ping",{from:Room.myId, host:true});
+        }
+      });
+      ch.on("broadcast",{event:"room_ping"},function(msg){
+        var p=msg.payload||{};
+        if(p.host) Room.hostSeen=true;
+      });
+      ch.on("broadcast",{event:"finish"},function(msg){
+        var p=msg.payload||{};
+        if(p.from && typeof p.count==="number"){
+          // Rellena el mini-tablero de ese jugador hasta su marca final si algún «place» se perdió
+          syncRivalBoard(p.from, p.count); refreshLeader(); updateHUD();
+        }
+        if(finished) return;
+        if(p.complete){
+          Room.winnerId=p.from||null;
+          endGame("aiComplete");
+        }
+        else { endGame("time"); }
+      });
+      ch.subscribe(function(status){
+        if(ch!==Room.channel) return; // aviso de un canal ya sustituido: se ignora
+        if(status==="SUBSCRIBED"){
+          Room.connected=true; Room.joining=false; Room.retries=0;
+          ch.track({id:Room.myId, host:Room.amHost, joinedAt:Room.joinedAt});
+          syncLobby();
+          if(!Room.amHost){
+            // El invitado se anuncia y verifica que la sala EXISTE:
+            // si en unos segundos no aparece ningún anfitrión (ni en
+            // presencia ni respondiendo), avisa de que ese código no
+            // tiene sala en vez de dejarle esperando sin explicación.
+            Room.send("hello",{from:Room.myId});
+            if(Room.watchdog) clearTimeout(Room.watchdog);
+            Room.watchdog=setTimeout(function(){
+              Room.watchdog=null;
+              if(!Room.code||Room.amHost||playing) return;
+              if(!hostPresent() && !Room.hostSeen){
+                lobbyStatus("No se encuentra ninguna sala con el código "+Room.code+". Comprueba que el anfitrión la ha creado ya y que el código coincide letra a letra; si la crea ahora, aparecerás dentro en cuanto entre.","err");
+              }
+            },7000);
+          }
+        } else if(status==="CHANNEL_ERROR"||status==="TIMED_OUT"||status==="CLOSED"){
+          Room.connected=false; Room.joining=false;
+          scheduleRetry();
+        }
+      });
     });
   }
   function syncLobby(){
@@ -1584,7 +1710,12 @@ body{background:var(--bg)}
     }
     // Relevo de anfitrión: si quien creó la sala se va, pasa a serlo
     // el jugador que entró antes, para que la sala no quede muerta.
-    if(!hostThere && earliest && earliest.id===Room.myId && !Room.amHost){
+    // OJO: solo si esta sala TUVO anfitrión de verdad (hadHost). Sin
+    // esa condición, un invitado que entraba a un código sin sala se
+    // «promocionaba» a sí mismo a anfitrión estando solo en un canal
+    // vacío y veía «Sala creada»: una sala fantasma que nunca existió.
+    if(hostThere) Room.hadHost=true;
+    if(!hostThere && Room.hadHost && earliest && earliest.id===Room.myId && !Room.amHost){
       Room.amHost=true;
       try{ Room.channel.track({id:Room.myId, host:true, joinedAt:earliest.joinedAt||Date.now()}); }catch(e){}
       hostThere=true;
@@ -1634,12 +1765,16 @@ body{background:var(--bg)}
     $("lobbyHome").style.display="none"; $("lobbyRoom").style.display="block";
   }
   function leaveRoom(silent){
+    if(!silent){ Room.leaving=true; } // salida pedida por el usuario: no reconectar
+    if(Room.retryTimer){ clearTimeout(Room.retryTimer); Room.retryTimer=null; }
+    if(Room.watchdog){ clearTimeout(Room.watchdog); Room.watchdog=null; }
     if(Room.channel){
       try{ Room.channel.untrack(); }catch(e){}
       if(sbClient){ try{ sbClient.removeChannel(Room.channel); }catch(e){} }
     }
     Room.channel=null; Room.code=null; Room.players=0; Room.connected=false; Room.amHost=false; Room.currentMatch=0;
-    Room.playersMap={}; Room.leaderName=null; Room.winnerId=null;
+    Room.playersMap={}; Room.leaderName=null; Room.winnerId=null; Room.hostSeen=false; Room.joining=false;
+    if(!silent){ try{ sessionStorage.removeItem(ROOM_STORE_KEY); }catch(e){} }
     var lpEl=$("lobbyPlayers"); if(lpEl) lpEl.innerHTML="";
     if(!silent){
       $("lobbyHome").style.display="block"; $("lobbyRoom").style.display="none";
@@ -1647,6 +1782,24 @@ body{background:var(--bg)}
       updateStartButton();
     }
   }
+  // Latido de presencia: cada 15 s quien está en una sala reafirma su
+  // presencia, para que un corte breve de red no le haga «desaparecer»
+  // de la lista de los demás.
+  setInterval(function(){
+    if(Room.channel && Room.connected && Room.code){
+      try{ Room.channel.track({id:Room.myId, host:Room.amHost, joinedAt:Room.joinedAt}); }catch(e){}
+    }
+  },15000);
+  // Al volver a la app (p. ej. tras compartir el código por WhatsApp),
+  // iOS/Android pueden haber cortado el socket: si estamos en una sala
+  // y la conexión cayó, se vuelve a entrar solo a la misma sala.
+  document.addEventListener("visibilitychange",function(){
+    if(document.hidden) return;
+    if(mode==="online" && Room.code && !Room.connected && !Room.joining && !Room.leaving){
+      Room.retries=0;
+      joinRoom(Room.code, Room.amHost, true);
+    }
+  });
 
   // ---------- MODE TABS ----------
   function setModeTab(m){
@@ -1716,6 +1869,21 @@ body{background:var(--bg)}
   });
   $("btnLobbyStart").addEventListener("click",function(){ Room.hostStart(); });
   $("btnLeaveRoom").addEventListener("click",function(){ leaveRoom(false); });
+  $("btnRejoin").addEventListener("click",function(){
+    var saved=storedRoom();
+    if(saved&&saved.code) joinRoom(saved.code, !!saved.host, false);
+  });
+
+  // Si la página se recargó a mitad de una sala (el móvil la descarta
+  // al cambiar de app), se ofrece volver a la MISMA sala con un toque,
+  // en vez de perderla como pasaba antes.
+  var savedRoom=storedRoom();
+  if(savedRoom&&savedRoom.code){
+    setMode("online");
+    $("rejoinCode").textContent=savedRoom.code;
+    $("btnRejoin").style.display="";
+    homeStatus("Antes estabas en la sala "+savedRoom.code+". Pulsa «Volver a la sala» para entrar otra vez con el mismo código.","");
+  }
 
   resetGame(null);
 })();
