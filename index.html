@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8" />
-<!-- perfect-build:202611072100 -->
+<!-- perfect-build:202611072130 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
@@ -62,7 +62,7 @@
    Si la comprobación falla (sin red, fetch bloqueado), no se
    toca nada y el juego arranca igual que siempre.
    ============================================================ */
-window.PERFECT_VERSION="202611072100";
+window.PERFECT_VERSION="202611072130";
 (function(){
   "use strict";
   var VERSION=window.PERFECT_VERSION;
@@ -926,6 +926,39 @@ body{background:var(--bg)}
   #rankList li b{margin-left:2px}
 }
 </style>
+<style id="fix-serie-reorden">
+/* ============================================================
+   v17 — SERIE AL MEJOR DE X + REORDEN CADA 10 s (petición de Mork)
+   Al crear la sala el anfitrión elige el formato de la serie
+   (1, 3, 5 o 7 partidas) y si cada 10 s se reordenan la bandeja
+   y los agujeros vacíos. El anfitrión es la autoridad: reparte
+   el formato, el marcador de la serie y cada reorden por PeerJS.
+   ============================================================ */
+/* Configuración de la serie en el vestíbulo */
+.series-config{text-align:left;background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin:10px 0 2px}
+.series-config>span{display:block;font-weight:900;font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+#seriesSeg{display:flex;width:100%}
+#seriesSeg button{flex:1;padding:7px 4px;font-size:13px}
+#seriesSeg button:disabled{opacity:.55;cursor:default}
+.series-toggle{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;font-weight:800;font-size:14px;color:var(--ink);cursor:pointer}
+.series-toggle input{width:22px;height:22px;accent-color:var(--player);flex:0 0 auto;cursor:pointer}
+.series-toggle input:disabled{cursor:default}
+#seriesSummary{margin:8px 0 0;font-size:12.5px}
+/* Marcador de la serie y clasificación final en el modal */
+#seriesBoard{list-style:none;margin:10px auto 2px;padding:0;max-width:340px;text-align:left}
+#seriesBoard li{display:flex;align-items:center;gap:8px;font-weight:800;font-size:14.5px;color:var(--ink);background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:6px 12px;margin:5px 0}
+#seriesBoard li .pdot{width:10px;height:10px;border-radius:50%;flex:0 0 auto}
+#seriesBoard li b{margin-left:auto;font-family:"Sora",sans-serif;font-size:13.5px;text-align:right}
+#seriesBoard li.winner{background:#fdf3e0;border-color:#f3ddab}
+#seriesBoard li.sb-head{background:transparent;border:0;padding:2px 12px 0;font-size:11px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+@media (prefers-color-scheme: dark){ #seriesBoard li.winner{background:#2a2110;border-color:#5c4718} }
+/* Aviso de reorden: cuenta atrás 3-2-1 y confirmación */
+#reorderWarn{position:fixed;left:50%;top:calc(64px + env(safe-area-inset-top,0px));transform:translateX(-50%) scale(.92);z-index:70;background:var(--player);color:#fff;font-family:"Sora",sans-serif;font-weight:800;font-size:16px;padding:9px 18px;border-radius:999px;box-shadow:var(--shadow-pop);opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease;white-space:nowrap;max-width:calc(100vw - 24px)}
+#reorderWarn.show{opacity:1;transform:translateX(-50%) scale(1)}
+#reorderWarn.done{background:var(--board)}
+#reorderChip{display:none;font-weight:900;font-size:11px;color:var(--player-dark);background:#fdecec;border:1px solid #f3b3b3;border-radius:999px;padding:2px 9px;white-space:nowrap}
+@media (prefers-color-scheme: dark){ #reorderChip{background:#33151a;border-color:#6e2530;color:#ffb4ab} }
+</style>
 </head>
 <body>
 <div class="wrap">
@@ -986,7 +1019,7 @@ body{background:var(--bg)}
         <div class="board" id="boardPlayer"></div>
 
         <div class="tray">
-          <div class="tray-head"><strong><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:15px;height:15px;vertical-align:-2px;margin-right:5px"><path d="M14 3h3a4 4 0 0 1 4 4v3h-2.2a2.3 2.3 0 0 0 0 4.6H21V18a3 3 0 0 1-3 3h-3v-2.2a2.3 2.3 0 0 0-4.6 0V21H7a4 4 0 0 1-4-4v-3h2.2a2.3 2.3 0 0 0 0-4.6H3V7a3 3 0 0 1 3-3h3v2.2a2.3 2.3 0 0 0 4.6 0V3z" transform="scale(0.92) translate(1,1)"/></svg>Tu bandeja de piezas</strong><span id="trayCount">25 por colocar</span></div>
+          <div class="tray-head"><strong><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:15px;height:15px;vertical-align:-2px;margin-right:5px"><path d="M14 3h3a4 4 0 0 1 4 4v3h-2.2a2.3 2.3 0 0 0 0 4.6H21V18a3 3 0 0 1-3 3h-3v-2.2a2.3 2.3 0 0 0-4.6 0V21H7a4 4 0 0 1-4-4v-3h2.2a2.3 2.3 0 0 0 0-4.6H3V7a3 3 0 0 1 3-3h3v2.2a2.3 2.3 0 0 0 4.6 0V3z" transform="scale(0.92) translate(1,1)"/></svg>Tu bandeja de piezas</strong><span id="reorderChip">Reorden en 10 s</span><span id="trayCount">25 por colocar</span></div>
           <div class="tray-grid" id="tray"></div>
         </div>
       </div>
@@ -1030,6 +1063,9 @@ body{background:var(--bg)}
   <footer>Perfect digital — contra la IA u online con hasta 8 jugadores · 25 piezas · 80 segundos · Al acabar el tiempo, la bandeja salta.</footer>
 </div>
 
+<!-- REORDEN: aviso previo (3… 2… 1…) y confirmación -->
+<div id="reorderWarn" role="status" aria-live="polite"></div>
+
 <!-- COUNTDOWN -->
 <div class="countdown" id="countdown"><div id="countNum">3</div></div>
 
@@ -1049,6 +1085,7 @@ body{background:var(--bg)}
       <div class="final-box a"><b id="finalAI">0</b><span id="finalOppLabel">IA</span></div>
     </div>
     <ol id="finalRanking" style="display:none"></ol>
+    <ol id="seriesBoard" style="display:none"></ol>
 
     <!-- MODE TABS -->
     <div class="seg mode-seg" id="modeSeg" role="group" aria-label="Modo de juego">
@@ -1106,6 +1143,17 @@ body{background:var(--bg)}
         </div>
         <div class="lobby-status" id="lobbyStatus">Conectando con la sala…</div>
         <div id="lobbyPlayers" aria-label="Jugadores en la sala"></div>
+        <div class="series-config" id="seriesConfig">
+          <span>Serie — gana quien gane la mayoría de partidas</span>
+          <div class="seg" id="seriesSeg" role="group" aria-label="Formato de la serie">
+            <button type="button" data-series="1">1 partida</button>
+            <button type="button" data-series="3" class="active">Mejor de 3</button>
+            <button type="button" data-series="5">Mejor de 5</button>
+            <button type="button" data-series="7">Mejor de 7</button>
+          </div>
+          <label class="series-toggle" for="reorderToggle"><span>Reordenar cada 10 s<small style="display:block;font-weight:700;color:var(--muted);font-size:12px">La bandeja y los agujeros vacíos cambian de sitio en plena partida. Las piezas ya colocadas no se mueven.</small></span><input type="checkbox" id="reorderToggle" /></label>
+          <p class="hint" id="seriesSummary">Serie al mejor de 3: gana la serie quien gane 2 partidas.</p>
+        </div>
         <div class="online-actions">
           <button class="btn btn-primary" id="btnLobbyStart" disabled style="font-size:16px;padding:12px 22px">Empezar partida</button>
           <button class="btn btn-ghost" id="btnRetryConn" style="display:none;font-size:14px;padding:10px 18px">Reintentar conexión</button>
@@ -1182,6 +1230,28 @@ body{background:var(--bg)}
   // en todos los móviles, porque las claves se ordenan igual).
   var RIVAL_COLORS=["#f5a524","#22c55e","#3b82f6","#a855f7","#ec4899","#06b6d4","#84cc16"];
   var MAX_PLAYERS=8;
+
+  // ---------- SERIE AL MEJOR DE X + REORDEN (online) ----------
+  // El anfitrión elige el formato al crear la sala (1, 3, 5 o 7
+  // partidas) y si hay reorden cada 10 s. Él es la autoridad: reparte
+  // el formato (series_config), el marcador tras cada partida
+  // (series_update) y la semilla de cada reorden (reorder) por PeerJS.
+  var Series={ total:3, wins:{}, totals:{}, played:0, over:false, championId:null, currentGame:0, countedFor:-1 };
+  var reorderOn=false; // interruptor «Reordenar cada 10 s», apagado por defecto
+  var ReorderState={ idx:0, appliedIdx:0, nextAt:10, warnHideTimer:null };
+  function seriesMajority(){ return Math.floor(Series.total/2)+1; }
+  function resetSeries(){
+    Series.wins={}; Series.totals={}; Series.played=0; Series.over=false;
+    Series.championId=null; Series.currentGame=0; Series.countedFor=-1;
+  }
+  function playerNameById(id){
+    if(id===Room.myId) return "Tú";
+    var p=Room.playersMap[id]; return p?p.name:"Un jugador";
+  }
+  function playerColorById(id){
+    if(id===Room.myId) return "#e5484d";
+    var p=Room.playersMap[id]; return p?p.color:"#999";
+  }
 
   // ---------- AUDIO (WebAudio, sin archivos) ----------
   var actx=null;
@@ -1355,10 +1425,135 @@ body{background:var(--bg)}
       el.appendChild(li);
     });
   }
+  // Filas de la SERIE: victorias y figuras totales de cada jugador,
+  // ordenadas por victorias y, a igualdad, por figuras totales
+  function seriesRows(){
+    var ids={}; ids[Room.myId||"me"]=true;
+    Object.keys(Room.playersMap).forEach(function(id){ ids[id]=true; });
+    Object.keys(Series.wins).forEach(function(id){ ids[id]=true; });
+    Object.keys(Series.totals).forEach(function(id){ ids[id]=true; });
+    var rows=Object.keys(ids).map(function(id){
+      return { id:id, name:playerNameById(id), color:playerColorById(id),
+        wins:Series.wins[id]||0, totals:Series.totals[id]||0, me:id===Room.myId };
+    });
+    rows.sort(function(a,b){ return b.wins-a.wins || b.totals-a.totals || (a.me?-1:b.me?1:a.name.localeCompare(b.name)); });
+    return rows;
+  }
+  // Marcador de la serie entre partidas (victorias por jugador)
+  function renderSeriesBoard(){
+    var el=$("seriesBoard"); if(!el) return;
+    if(mode!=="online" || (Series.total<=1 && !Series.over)){ el.style.display="none"; el.innerHTML=""; return; }
+    var rows=seriesRows();
+    el.innerHTML="";
+    var head=document.createElement("li");
+    head.className="sb-head";
+    head.innerHTML= Series.over
+      ? '<span style="flex:1">Serie terminada</span><span>Victorias · Figuras</span>'
+      : '<span style="flex:1">Serie — partida '+(Series.played+1)+' de '+Series.total+' · a '+seriesMajority()+' victorias</span><span>Victorias</span>';
+    el.appendChild(head);
+    rows.forEach(function(r,i){
+      var li=document.createElement("li");
+      if(Series.over && i===0) li.className="winner";
+      li.innerHTML='<span style="font-weight:900;color:var(--muted);min-width:26px">'+(i+1)+'º</span><span class="pdot" style="background:'+r.color+'"></span><span>'+r.name+(Series.over&&i===0?" — gana la serie":"")+'</span><b>'+r.wins+' vict'+(Series.over?' · '+r.totals+' fig':'')+'</b>';
+      el.appendChild(li);
+    });
+    el.style.display="block";
+  }
+  // Al acabar una partida: suma la victoria y las figuras a la serie.
+  // El anfitrión calcula el resultado oficial y lo reparte; los
+  // invitados hacen un cálculo provisional con su propio marcador
+  // que el mensaje del anfitrión (series_update) corrige después.
+  function countSeriesMatch(){
+    if(mode!=="online") return;
+    if(Series.countedFor===Room.currentMatch) return;
+    Series.countedFor=Room.currentMatch;
+    var rows=standings();
+    var winnerId=null;
+    if(rows.length && rows[0].count>(rows.length>1?rows[1].count:-1)) winnerId=rows[0].id;
+    rows.forEach(function(r){ Series.totals[r.id]=(Series.totals[r.id]||0)+r.count; });
+    if(winnerId) Series.wins[winnerId]=(Series.wins[winnerId]||0)+1;
+    Series.played++;
+    var champ=null;
+    Object.keys(Series.wins).forEach(function(id){ if(Series.wins[id]>=seriesMajority()) champ=id; });
+    Series.over= !!champ || Series.played>=Series.total;
+    if(Series.over && !champ){
+      var sr=seriesRows();
+      if(sr.length && (sr.length===1 || sr[0].wins>sr[1].wins || sr[0].totals>sr[1].totals)) champ=sr[0].id;
+    }
+    Series.championId=champ;
+    if(Room.amHost){
+      var result={ match:Room.currentMatch, game:Series.currentGame, winnerId:winnerId,
+        wins:Series.wins, totals:Series.totals, played:Series.played, over:Series.over, championId:Series.championId };
+      Room.send("series_update",result);
+      setTimeout(function(){ if(mode==="online") Room.send("series_update",result); },700); // reenvío anti-pérdida
+    }
+    renderSeriesBoard();
+  }
+  // El resultado oficial de la serie que reparte el anfitrión
+  function applySeriesUpdate(p){
+    if(!p) return;
+    if(typeof p.played==="number" && p.played<Series.played && Series.countedFor===p.match) return; // copia antigua
+    Series.wins=p.wins||{}; Series.totals=p.totals||{};
+    if(typeof p.played==="number") Series.played=p.played;
+    Series.over=!!p.over; Series.championId=p.championId||null;
+    if(p.match!=null) Series.countedFor=p.match;
+    if(finished){ renderFinalRanking(); renderSeriesBoard(); refreshEndButtons(); }
+  }
+  // Botón principal del vestíbulo según el punto de la serie
+  function seriesStartLabel(){
+    if(!Room.amHost) return "El anfitrión empieza la partida";
+    if(Room.players<2) return "Esperando jugadores… ("+Room.players+" de "+MAX_PLAYERS+")";
+    if(Series.over) return Series.total>1 ? "Nueva serie — empezar" : "Revancha — empezar otra";
+    if(Series.played>0 && Series.total>1) return "Siguiente partida — la "+(Series.played+1)+" de "+Series.total;
+    return "Empezar partida ("+Room.players+" jugadores)";
+  }
+  function refreshEndButtons(){
+    var b=$("btnLobbyStart"); if(!b) return;
+    b.disabled= !(Room.amHost && Room.players>=2) || playing;
+    b.textContent=seriesStartLabel();
+  }
+  // Configuración de la serie: el anfitrión la elige; los invitados
+  // la ven (controles bloqueados) tal y como llega del anfitrión.
+  function seriesSummaryText(){
+    var base= Series.total<=1
+      ? "Partida única: sin serie, gana esta partida y ya está."
+      : "Serie al mejor de "+Series.total+": gana la serie quien gane "+seriesMajority()+" partidas.";
+    return base+(reorderOn ? " Reorden cada 10 s: activado." : " Reorden cada 10 s: desactivado.");
+  }
+  function applySeriesConfigUI(){
+    document.querySelectorAll("#seriesSeg button").forEach(function(b){
+      b.classList.toggle("active", parseInt(b.dataset.series,10)===Series.total);
+      b.disabled= !Room.amHost || playing;
+    });
+    var t=$("reorderToggle");
+    if(t){ t.checked=!!reorderOn; t.disabled= !Room.amHost || playing; }
+    var s=$("seriesSummary"); if(s) s.textContent= Room.amHost ? seriesSummaryText() : seriesSummaryText()+" Lo elige el anfitrión de la sala.";
+    updateReorderChip();
+  }
+  function broadcastSeriesConfig(){
+    if(mode==="online" && Room.amHost && Room.code) Room.send("series_config",{total:Series.total, reorder:reorderOn});
+  }
   // Tablero final de posiciones: se rellena al acabar la partida
   function renderFinalRanking(){
     var el=$("finalRanking"); if(!el) return;
     if(mode!=="online"){ el.style.display="none"; el.innerHTML=""; return; }
+    if(Series.over && Series.total>1){
+      // CLASIFICACIÓN FINAL DE LA SERIE: victorias y figuras totales
+      var srows=seriesRows();
+      el.innerHTML="";
+      var shead=document.createElement("li");
+      shead.className="fr-head";
+      shead.innerHTML='<span style="flex:1">Clasificación final de la serie</span><span>Victorias · Figuras</span>';
+      el.appendChild(shead);
+      srows.forEach(function(r,i){
+        var li=document.createElement("li");
+        if(i===0) li.className="winner";
+        li.innerHTML='<span style="font-weight:900;color:var(--muted);min-width:26px">'+(i+1)+'º</span><span class="pdot" style="background:'+r.color+'"></span><span>'+r.name+(i===0?" — gana la serie":"")+'</span><b>'+r.wins+' · '+r.totals+'</b>';
+        el.appendChild(li);
+      });
+      el.style.display="block";
+      return;
+    }
     var rows=standings();
     el.innerHTML="";
     var head=document.createElement("li");
@@ -1372,6 +1567,84 @@ body{background:var(--bg)}
       el.appendChild(li);
     });
     el.style.display="block";
+  }
+  // ---------- REORDEN CADA 10 s ----------
+  // Cada 10 s de partida, el anfitrión genera una semilla y la reparte
+  // (mensaje «reorder»): todos aplican EL MISMO reorden con esa semilla
+  // sobre lo que a cada uno le queda por colocar. Las piezas ya
+  // colocadas no se tocan: solo cambian de sitio los agujeros VACÍOS
+  // y las fichas que siguen en la bandeja. Como la bandeja se reordena
+  // moviendo las CELDAS (la pieza no cambia de nodo), la pieza que el
+  // jugador está arrastrando — en posición fija sobre la pantalla —
+  // no se le escapa de la mano.
+  function reorderBanner(text, done){
+    var el=$("reorderWarn"); if(!el) return;
+    el.textContent=text; el.className= done ? "show done" : "show";
+    if(ReorderState.warnHideTimer) clearTimeout(ReorderState.warnHideTimer);
+    ReorderState.warnHideTimer=setTimeout(function(){ el.className=""; }, done?1100:400);
+  }
+  function hideReorderBanner(){
+    var el=$("reorderWarn"); if(el) el.className="";
+    if(ReorderState.warnHideTimer){ clearTimeout(ReorderState.warnHideTimer); ReorderState.warnHideTimer=null; }
+  }
+  function updateReorderChip(){
+    var chip=$("reorderChip"); if(!chip) return;
+    var on= mode==="online" && reorderOn;
+    chip.style.display= on ? "" : "none";
+    if(on && !playing) chip.textContent="Reorden cada 10 s";
+  }
+  function applyReorder(p){
+    if(!p || p.match!==Room.currentMatch) return;
+    if(!playing || finished) return; // la partida ya acabó: nada que reordenar
+    if(p.idx<=ReorderState.appliedIdx) return; // duplicado del reenvío
+    ReorderState.appliedIdx=p.idx;
+    var seed=p.seed>>>0;
+    // Agujeros vacíos: sus formas se mezclan con la semilla compartida
+    var empties=Array.prototype.slice.call(boardPlayer.querySelectorAll(".slot:not(.filled)"));
+    var shapes=empties.map(function(s){ return parseInt(s.dataset.shape,10); });
+    var shuffled=seededShuffle(shapes, seed);
+    empties.forEach(function(slot,i){
+      var shapeId=shuffled[i];
+      slot.dataset.shape=shapeId;
+      slot.setAttribute("aria-label","Agujero "+SHAPES[shapeId].name);
+      slot.title="Agujero: "+SHAPES[shapeId].name;
+      slot.innerHTML='<span class="hole-shape" style="display:grid;place-items:center;width:100%;height:100%">'+svgShape(shapeId)+'</span>';
+      var sv=slot.querySelector("svg");
+      sv.classList.add("hole-shape"); sv.style.width="96%"; sv.style.height="96%";
+    });
+    // Bandeja: se reordenan las celdas enteras con la misma semilla
+    var cells=Array.prototype.slice.call(tray.children);
+    var shuffledCells=seededShuffle(cells, (seed^0x9e3779b9)>>>0);
+    shuffledCells.forEach(function(c){ tray.appendChild(c); });
+    reorderBanner("¡Reordenado! Bandeja y agujeros han cambiado de sitio", true);
+    beep(520,0.08,"triangle",0.1); beep(780,0.1,"triangle",0.1,0.07);
+  }
+  // Se llama en cada tick del reloj de partida (50 ms)
+  function reorderTick(){
+    if(mode!=="online" || !reorderOn || !playing || finished) return;
+    if(timeLeft<=0.05) return; // con el tiempo agotado ya no se reordena
+    var elapsed=GAME_TIME-timeLeft;
+    var remain=ReorderState.nextAt-elapsed;
+    var chip=$("reorderChip");
+    if(ReorderState.nextAt<GAME_TIME){
+      if(chip) chip.textContent="Reorden en "+Math.max(0,Math.ceil(remain))+" s";
+      if(remain<=3.05 && remain>0){
+        reorderBanner("¡Se reordena en "+Math.ceil(remain)+"…!", false);
+      }
+    } else if(chip){ chip.textContent="Reorden cada 10 s"; }
+    if(elapsed>=ReorderState.nextAt){
+      ReorderState.idx++;
+      ReorderState.nextAt+=10;
+      hideReorderBanner();
+      if(Room.amHost){
+        var payload={ match:Room.currentMatch, idx:ReorderState.idx, seed:(Math.random()*4294967296)>>>0 };
+        applyReorder(payload);
+        Room.send("reorder",payload);
+        setTimeout(function(){
+          if(playing && !finished && mode==="online") Room.send("reorder",payload); // reenvío anti-pérdida; el receptor descarta por nº de reorden
+        },400);
+      }
+    }
   }
   function updateTimer(){
     $("timerNum").textContent=timeLeft.toFixed(1);
@@ -1500,7 +1773,10 @@ body{background:var(--bg)}
     timeLeft=GAME_TIME; playerPlaced=0; aiPlaced=0; fails=0; attempts=0; lastTickSec=99; deselect();
     Object.keys(Room.playersMap).forEach(function(id){ Room.playersMap[id].count=0; });
     Room.leaderName=null;
+    ReorderState.idx=0; ReorderState.appliedIdx=0; ReorderState.nextAt=10;
+    hideReorderBanner(); updateReorderChip();
     var fr=$("finalRanking"); if(fr){ fr.style.display="none"; fr.innerHTML=""; }
+    var sb=$("seriesBoard"); if(sb){ sb.style.display="none"; sb.innerHTML=""; }
     buildBoards(seed==null?null:seed);
     if(mode==="online") buildRivalBoards();
     updateHUD(); updateTimer(); applyModeLabels();
@@ -1538,11 +1814,13 @@ body{background:var(--bg)}
   function startClock(){
     playing=true; updateStartButton();
     msg("¡Vamos! Arrastra cada pieza a su agujero.");
-    $("aiMsg").textContent= mode==="online" ? "¡Tus rivales ya están encajando piezas!" : "¡La IA ya está encajando piezas!";
+    $("aiMsg").textContent= mode==="online"
+      ? (Series.total>1 ? "Partida "+Series.currentGame+" de "+Series.total+" de la serie. ¡Tus rivales ya están encajando piezas!" : "¡Tus rivales ya están encajando piezas!")
+      : "¡La IA ya está encajando piezas!";
     var last=performance.now();
     timerId=setInterval(function(){
       var now=performance.now(); var dt=(now-last)/1000; last=now;
-      timeLeft=Math.max(0,timeLeft-dt); updateTimer();
+      timeLeft=Math.max(0,timeLeft-dt); updateTimer(); reorderTick();
       var sec=Math.ceil(timeLeft);
       if(sec!==lastTickSec){ lastTickSec=sec; if(sec<=10&&sec>0) sndTick(); }
       if(timeLeft<=0){
@@ -1602,19 +1880,33 @@ body{background:var(--bg)}
     $("finalAI").textContent=aiPlaced;
     $("finalOppLabel").textContent= mode==="online" ? "Líder" : "IA";
     $("finalScore").style.display="flex";
+    countSeriesMatch(); // suma la victoria de esta partida a la serie (el anfitrión reparte el oficial)
     renderFinalRanking(); // TABLERO DE POSICIONES al acabar (solo online; en solo se oculta)
     $("modalTitle").textContent=title;
     $("modalText").textContent=text;
+    if(mode==="online" && Series.total>1){
+      $("modalText").textContent += Series.over
+        ? " Y con esta partida se acaba la serie: "+(Series.championId?playerNameById(Series.championId):"un jugador")+" la gana. Abajo tienes la clasificación final de la serie."
+        : " En la serie vais por la partida "+Series.played+" de "+Series.total+": gana quien llegue a "+seriesMajority()+" victorias.";
+    }
     $("popWord").style.display=(reason==="playerComplete"?"none":"block");
     // En el resultado: solo -> revancha directa; online -> revancha por la sala
     if(mode==="online"){
       $("soloPanel").style.display="none"; $("onlinePanel").style.display="block";
       setModeTab("online");
       $("lobbyStatus").className="lobby-status"+(Room.players>=2?" ok":"");
-      $("lobbyStatus").textContent= Room.amHost
-        ? (Room.players>=2 ? "Partida terminada. Mira el tablero de posiciones y pulsa «Empezar partida» para la revancha." : "Los demás han salido de la sala.")
-        : "Partida terminada. El anfitrión puede lanzar la revancha desde aquí.";
-      $("btnLobbyStart").textContent="Revancha — empezar otra";
+      if(Room.players<2){
+        $("lobbyStatus").textContent="Los demás han salido de la sala.";
+      } else if(Series.over && Series.total>1){
+        $("lobbyStatus").textContent="¡Serie terminada! "+(Series.championId?playerNameById(Series.championId):"Un jugador")+" gana la serie. Abajo tienes la clasificación final."+(Room.amHost?" Pulsa «Nueva serie» para jugar otra.":" El anfitrión puede lanzar una nueva serie.");
+      } else if(Series.total>1){
+        $("lobbyStatus").textContent="Partida "+Series.played+" de "+Series.total+" terminada. Mira el marcador de la serie: "+(Room.amHost?"pulsa «Siguiente partida» cuando quieras.":"el anfitrión lanzará la siguiente partida.");
+      } else {
+        $("lobbyStatus").textContent= Room.amHost
+          ? "Partida terminada. Mira el tablero de posiciones y pulsa «Empezar partida» para la revancha."
+          : "Partida terminada. El anfitrión puede lanzar la revancha desde aquí.";
+      }
+      refreshEndButtons();
     } else {
       $("btnModalStart").textContent="Jugar otra partida";
     }
@@ -1696,9 +1988,12 @@ body{background:var(--bg)}
     hostStart:function(){
       if(mode!=="online"||!this.amHost||playing) return;
       if(this.players<2){ lobbyStatus("Todavía no hay nadie más en la sala. Pásales el código "+this.code+" y espera a que se unan (de 2 a 8 jugadores).",""); return; }
+      if(Series.over || Series.played>=Series.total) resetSeries(); // serie acabada: la siguiente es una serie nueva
+      Series.currentGame=Series.played+1;
       this.match++;
       var seed=hashStr(this.code+"#"+this.match);
-      var payload={match:this.match, seed:seed};
+      var payload={match:this.match, seed:seed, seriesTotal:Series.total, reorder:reorderOn,
+        wins:Series.wins, totals:Series.totals, played:Series.played, game:Series.currentGame};
       this.send("game_start",payload);
       var self=this;
       setTimeout(function(){ self.send("game_start",payload); },1000); // reenvío anti-pérdida; el receptor descarta duplicados por nº de partida
@@ -1803,7 +2098,8 @@ body{background:var(--bg)}
       lobbyStatus("Estás dentro de la sala. Esperando a que el anfitrión empiece…","");
     }
     $("btnLobbyStart").disabled = !(Room.amHost && Room.players>=2) || playing;
-    $("btnLobbyStart").textContent = Room.amHost ? (Room.players>=2 ? "Empezar partida ("+Room.players+" jugadores)" : "Esperando jugadores… ("+Room.players+" de "+MAX_PLAYERS+")") : "El anfitrión empieza la partida";
+    $("btnLobbyStart").textContent = seriesStartLabel();
+    applySeriesConfigUI();
     if(rosterChanged && !playing && !finished){ buildRivalBoards(); }
     if(playing) renderRanking();
     updateStartButton();
@@ -1858,6 +2154,10 @@ body{background:var(--bg)}
         applyRoster(Room.roster);
         hostBroadcastRoster();
         netSendTo(conn.peer,{type:"roster", payload:{players:Room.roster}});
+        // El recién llegado recibe el formato de la serie y el reorden
+        // elegidos por el anfitrión, y el marcador si la serie va empezada.
+        netSendTo(conn.peer,{type:"series_config", payload:{total:Series.total, reorder:reorderOn}});
+        if(Series.played>0) netSendTo(conn.peer,{type:"series_update", payload:{match:Room.currentMatch, wins:Series.wins, totals:Series.totals, played:Series.played, over:Series.over, championId:Series.championId}});
       }
       else if(msg.type==="place"){
         if(typeof p.shape==="number") rivalPlaced(p.from, p.shape, p.count);
@@ -1881,7 +2181,29 @@ body{background:var(--bg)}
     }
     else if(msg.type==="game_start"){
       if(!p.match||p.match===Room.currentMatch) return; // duplicado del reenvío
+      // El inicio trae el formato de la serie y su marcador: todos
+      // juegan la misma serie que lleva el anfitrión.
+      if(typeof p.seriesTotal==="number") Series.total=p.seriesTotal;
+      if(typeof p.reorder==="boolean") reorderOn=p.reorder;
+      Series.wins=p.wins||{}; Series.totals=p.totals||{};
+      if(typeof p.played==="number") Series.played=p.played;
+      Series.over=false; Series.championId=null;
+      Series.currentGame=p.game||(Series.played+1);
+      applySeriesConfigUI();
       startOnlineMatch(p.match, p.seed);
+    }
+    else if(msg.type==="series_config"){
+      if(typeof p.total==="number" && [1,3,5,7].indexOf(p.total)>=0 && p.total!==Series.total){
+        Series.total=p.total; resetSeries(); Series.total=p.total;
+      }
+      if(typeof p.reorder==="boolean") reorderOn=p.reorder;
+      applySeriesConfigUI();
+    }
+    else if(msg.type==="series_update"){
+      applySeriesUpdate(p);
+    }
+    else if(msg.type==="reorder"){
+      applyReorder(p);
     }
     else if(msg.type==="place"){
       if(typeof p.shape==="number") rivalPlaced(p.from, p.shape, p.count);
@@ -1914,7 +2236,7 @@ body{background:var(--bg)}
       if(Room.leaving){ Room.joining=false; return; } // el usuario salió mientras cargaba
       leaveRoom(true);
       Room.code=code; Room.amHost=asHost; Room.connected=false;
-      if(!isRetry){ Room.match=0; Room.currentMatch=0; } // al reconectar se conserva la numeración: si volviera a 1, los invitados descartarían el siguiente inicio como duplicado
+      if(!isRetry){ Room.match=0; Room.currentMatch=0; resetSeries(); } // al reconectar se conserva la numeración: si volviera a 1, los invitados descartarían el siguiente inicio como duplicado
       Room.playersMap={}; Room.leaderName=null; Room.winnerId=null; Room.roster=[];
       Room.joinedAt=Date.now();
       lobbyShow();
@@ -2045,6 +2367,7 @@ body{background:var(--bg)}
     teardownPeer();
     Room.code=null; Room.players=0; Room.connected=false; Room.amHost=false; Room.currentMatch=0; Room.roster=[];
     Room.playersMap={}; Room.leaderName=null; Room.winnerId=null; Room.joining=false;
+    resetSeries(); hideReorderBanner();
     if(!silent){ try{ sessionStorage.removeItem(ROOM_STORE_KEY); }catch(e){} }
     var lpEl=$("lobbyPlayers"); if(lpEl) lpEl.innerHTML="";
     if(!silent){
@@ -2131,6 +2454,27 @@ body{background:var(--bg)}
   });
   document.querySelectorAll("#modeSeg button").forEach(function(b){
     b.addEventListener("click",function(){ setMode(b.dataset.mode); });
+  });
+  // Formato de la serie y reorden: solo el anfitrión los cambia, y
+  // solo entre partidas; al cambiarlos la serie vuelve a cero y el
+  // nuevo formato se reparte a todos los de la sala.
+  document.querySelectorAll("#seriesSeg button").forEach(function(b){
+    b.addEventListener("click",function(){
+      if(!Room.amHost || playing) return;
+      var v=parseInt(b.dataset.series,10);
+      if([1,3,5,7].indexOf(v)<0 || v===Series.total) { applySeriesConfigUI(); return; }
+      Series.total=v; resetSeries();
+      applySeriesConfigUI(); broadcastSeriesConfig();
+      lobbyStatus("Formato de la serie: "+(v<=1?"partida única":"al mejor de "+v)+". Se aplica desde la siguiente partida que empieces.","ok");
+    });
+  });
+  $("reorderToggle").addEventListener("change",function(){
+    if(!Room.amHost || playing){ applySeriesConfigUI(); return; }
+    reorderOn=!!this.checked;
+    applySeriesConfigUI(); broadcastSeriesConfig();
+    lobbyStatus(reorderOn
+      ? "Reorden cada 10 s ACTIVADO: en cada partida, la bandeja y los agujeros vacíos cambiarán de sitio a la vez en todos los móviles."
+      : "Reorden cada 10 s desactivado.","ok");
   });
   $("btnCreateRoom").addEventListener("click",function(){ joinRoom(genCode(), true); });
   $("btnJoinRoom").addEventListener("click",function(){
