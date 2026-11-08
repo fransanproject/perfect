@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8" />
-<!-- perfect-build:202611072130 -->
+<!-- perfect-build:202611081945 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
@@ -62,7 +62,7 @@
    Si la comprobación falla (sin red, fetch bloqueado), no se
    toca nada y el juego arranca igual que siempre.
    ============================================================ */
-window.PERFECT_VERSION="202611072130";
+window.PERFECT_VERSION="202611081945";
 (function(){
   "use strict";
   var VERSION=window.PERFECT_VERSION;
@@ -1126,7 +1126,7 @@ body{background:var(--bg)}
           <button class="btn btn-primary" id="btnCreateRoom" style="font-size:16px;padding:12px 22px">Crear sala nueva</button>
         </div>
         <div class="join-row">
-          <input id="joinCode" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" maxlength="4" placeholder="CÓDIGO" aria-label="Código de sala" />
+          <input id="joinCode" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" maxlength="4" placeholder="CÓDIGO" aria-label="Código de sala" />
           <button class="btn btn-ghost" id="btnJoinRoom" style="font-size:15px;padding:10px 18px">Unirme a la sala</button>
         </div>
         <div class="online-actions" style="margin-top:2px">
@@ -1927,7 +1927,46 @@ body{background:var(--bg)}
   // contacto a los móviles al entrar: no guarda partidas, no necesita
   // cuenta ni proyecto, y durante la partida los datos van de móvil
   // a móvil sin pasar por ningún servidor. Sin Supabase.
-  function hostPeerId(code){ return "perfect-duelo-"+code.toLowerCase(); }
+  function hostPeerId(code){ return "perfect-"+code; } // id del anfitrión: perfect-NNNN con el código de 4 números
+  // Reparación 2026-11-08 (salas con más de un invitado): tres fallos
+  // encadenados dejaban fuera a los invitados 2..8 y hacían que los
+  // jugadores nuevos «no encontraran» salas que sí existían:
+  //  1) El «join» del invitado se mandaba UNA sola vez y el anfitrión
+  //     solo escuchaba mensajes al abrirse el canal en su lado: si ese
+  //     mensaje se perdía en la carrera de apertura, el invitado jamás
+  //     entraba en la lista ni recibía nada, y ningún temporizador lo
+  //     rescataba. Ahora el anfitrión escucha desde que llega la
+  //     conexión, saluda él al abrir el canal, el invitado reenvía su
+  //     «join» hasta ver la lista y, si la lista no llega en 12 s, se
+  //     reconecta solo en vez de quedarse colgado.
+  //  2) Al volver de WhatsApp, la sala del anfitrión se recreaba con
+  //     el mismo código mientras el registro anterior aún constaba
+  //     ocupado: el código saltaba a OTRO distinto sin avisar y los
+  //     invitados con el código compartido recibían «sala no
+  //     encontrada». Ahora se reintenta con el MISMO código varias
+  //     veces (y la vuelta a la app intenta reconectar la señalización
+  //     sin destruir la sala); solo si es imposible se cambia de
+  //     código, avisándolo en grande para volver a compartirlo. Y una
+  //     reconexión de señalización ya no resetea la lista de jugadores.
+  //  3) El inicio se reenviaba una sola vez y nadie confirmaba: con
+  //     varios invitados, al que se le perdían las dos copias nunca
+  //     entraba. Ahora hay reenvíos a 1 s y 2 s, confirmación
+  //     «start_ack» de cada invitado y reenvío directo a los 2,6 s a
+  //     quien no haya confirmado; un invitado que entra con la
+  //     partida en marcha recibe el inicio de esa partida al llegar.
+  //  Además se pasa configuración ICE explícita (STUN + TURN del
+  //  propio punto de encuentro) a anfitrión e invitados: sin TURN,
+  //  los móviles tras el NAT de su operadora a menudo no conseguían
+  //  abrir el canal directo con el anfitrión.
+  function newPeer(id){
+    var opts={ debug:0, config:{ iceServers:[
+      { urls:"stun:stun.l.google.com:19302" },
+      { urls:"stun:stun1.l.google.com:19302" },
+      { urls:"turn:0.peerjs.com:3478", username:"peerjs", credential:"peerjsp" },
+      { urls:"turn:0.peerjs.com:3478?transport=tcp", username:"peerjs", credential:"peerjsp" }
+    ]}};
+    return id ? new window.Peer(id, opts) : new window.Peer(opts);
+  }
   // La librería PeerJS llega por CDN: si el CDN principal falla o va
   // lento, se intenta una segunda fuente de la MISMA librería y se
   // espera a que esté antes de dar un error.
@@ -1977,6 +2016,7 @@ body{background:var(--bg)}
     peer:null, conns:{}, hostConn:null, roster:[], code:null, myId:null, amHost:false, players:0, match:0, currentMatch:0, connected:false,
     playersMap:{}, leaderName:null, winnerId:null,
     retries:0, retryTimer:null, watchdog:null, joining:false, leaving:false, joinedAt:0, lastError:"",
+    joinTimer:null, rosterWait:null, idRetries:0, seekRetries:0, acks:{},
     // Enviar un evento de partida: el anfitrión lo reparte a todos los
     // invitados; un invitado se lo manda al anfitrión, que lo aplica
     // y lo retransmite a los demás.
@@ -1994,9 +2034,18 @@ body{background:var(--bg)}
       var seed=hashStr(this.code+"#"+this.match);
       var payload={match:this.match, seed:seed, seriesTotal:Series.total, reorder:reorderOn,
         wins:Series.wins, totals:Series.totals, played:Series.played, game:Series.currentGame};
+      this.acks={}; // confirmaciones de inicio por invitado, para el reenvío directo
       this.send("game_start",payload);
       var self=this;
-      setTimeout(function(){ self.send("game_start",payload); },1000); // reenvío anti-pérdida; el receptor descarta duplicados por nº de partida
+      [1000,2000].forEach(function(ms){ // reenvíos anti-pérdida; el receptor descarta duplicados por nº de partida
+        setTimeout(function(){ if(mode==="online"&&self.amHost) self.send("game_start",payload); },ms);
+      });
+      setTimeout(function(){ // a los 2,6 s, reenvío DIRECTO a quien no confirmó haber entrado
+        if(mode!=="online"||!self.amHost) return;
+        Object.keys(self.conns).forEach(function(pid){
+          if(self.acks[pid]!==payload.match) netSendTo(pid,{type:"game_start", payload:payload});
+        });
+      },2600);
       startOnlineMatch(this.match, seed); // el anfitrión se aplica el inicio a sí mismo
     }
   };
@@ -2004,8 +2053,10 @@ body{background:var(--bg)}
     var el=$("lobbyStatus"); el.textContent=text; el.className="lobby-status"+(kind?" "+kind:"");
   }
   function genCode(){
-    var chars="ABCDEFGHJKMNPQRSTUVWXYZ23456789", out="";
-    for(var i=0;i<4;i++) out+=chars[Math.floor(Math.random()*chars.length)];
+    // Código de sala: siempre 4 NÚMEROS, sin letras (pedido de Mork,
+    // como en Rally Race y Chinchimoni): se dicta y se teclea mejor.
+    var out="";
+    for(var i=0;i<4;i++) out+=String(Math.floor(Math.random()*10));
     return out;
   }
   // Reintento de conexión: si la red móvil corta el contacto inicial,
@@ -2016,7 +2067,11 @@ body{background:var(--bg)}
     Room.retries++;
     if(Room.retries>MAX_RETRIES){
       Room.joining=false;
-      lobbyStatus("No se ha podido conectar tras "+MAX_RETRIES+" reintentos (último aviso: "+(Room.lastError||"sin respuesta")+"). Revisa tu conexión y prueba con «Reintentar conexión»; si abriste el juego desde dentro de WhatsApp, ábrelo en Safari/Chrome.","err");
+      if(Room.lastError==="peer-unavailable"){
+        lobbyStatus("No se encuentra ninguna sala con el código "+Room.code+". Comprueba que el anfitrión la ha creado ya (su móvil hace de servidor: tiene que tener el juego abierto en la sala) y que el código coincide letra a letra.","err");
+      } else {
+        lobbyStatus("No se ha podido conectar tras "+MAX_RETRIES+" reintentos (último aviso: "+(Room.lastError||"sin respuesta")+"). Revisa tu conexión y prueba con «Reintentar conexión»; si abriste el juego desde dentro de WhatsApp, ábrelo en Safari/Chrome.","err");
+      }
       var rb=$("btnRetryConn"); if(rb) rb.style.display="";
       return;
     }
@@ -2053,6 +2108,8 @@ body{background:var(--bg)}
     if(c && c.open){ try{ c.send(msg); }catch(e){} }
   }
   function teardownPeer(){
+    if(Room.joinTimer){ clearInterval(Room.joinTimer); Room.joinTimer=null; }
+    if(Room.rosterWait){ clearTimeout(Room.rosterWait); Room.rosterWait=null; }
     Object.keys(Room.conns).forEach(function(pid){
       try{ Room.conns[pid].close(); }catch(e){}
     });
@@ -2068,6 +2125,13 @@ body{background:var(--bg)}
     if(!list||!list.length) return;
     Room.roster=list.slice(0,MAX_PLAYERS);
     Room.players=Room.roster.length;
+    if(!Room.amHost && Room.connected){
+      // La lista HA LLEGADO: el invitado deja de reenviar su «join» y
+      // de esperar con temporizador (era el rescate que faltaba).
+      if(Room.joinTimer){ clearInterval(Room.joinTimer); Room.joinTimer=null; }
+      if(Room.rosterWait){ clearTimeout(Room.rosterWait); Room.rosterWait=null; }
+      Room.seekRetries=0;
+    }
     var oldMap=Room.playersMap, newMap={}, rivalIdx=0;
     Room.roster.forEach(function(entry,i){
       if(entry.id===Room.myId) return;
@@ -2139,25 +2203,44 @@ body{background:var(--bg)}
       if(playing&&mode==="online") $("aiMsg").textContent="Un jugador se ha desconectado de la sala. La partida sigue con los demás.";
     }
   }
+  // Saludo del anfitrión a un invitado: idempotente (entrar dos veces
+  // en la lista es imposible) y se repite con cada «join» que llegue,
+  // para que ningún invitado se quede sin lista aunque su primer
+  // mensaje se haya perdido por el camino.
+  function hostGreet(conn){
+    if(!hostAddGuest(conn.peer)){
+      try{ conn.send({type:"full", payload:{}}); }catch(e){}
+      setTimeout(function(){ try{ conn.close(); }catch(e){} },600);
+      return;
+    }
+    try{ conn.send({type:"welcome", payload:{you:conn.peer}}); }catch(e){}
+    applyRoster(Room.roster);
+    hostBroadcastRoster();
+    netSendTo(conn.peer,{type:"roster", payload:{players:Room.roster}});
+    // El recién llegado recibe el formato de la serie y el reorden
+    // elegidos por el anfitrión, y el marcador si la serie va empezada.
+    netSendTo(conn.peer,{type:"series_config", payload:{total:Series.total, reorder:reorderOn}});
+    if(Series.played>0) netSendTo(conn.peer,{type:"series_update", payload:{match:Room.currentMatch, wins:Series.wins, totals:Series.totals, played:Series.played, over:Series.over, championId:Series.championId}});
+    if(playing && Room.currentMatch>0){
+      // Entra con la partida en marcha: recibe el inicio de ESTA
+      // partida (misma semilla = mismo tablero) y se suma al juego.
+      netSendTo(conn.peer,{type:"game_start", payload:{match:Room.currentMatch, seed:hashStr(Room.code+"#"+Room.currentMatch), seriesTotal:Series.total, reorder:reorderOn,
+        wins:Series.wins, totals:Series.totals, played:Series.played, game:Series.currentGame}});
+    }
+  }
   function hostOnConnection(conn){
     Room.conns[conn.peer]=conn;
+    // Los mensajes se escuchan desde que la conexión LLEGA, no desde
+    // que abre: así el «join» del invitado no se pierde si su canal
+    // se abre un instante antes de que el anfitrión lo atienda.
     conn.on("data",function(msg){
       if(!msg||!msg.type) return;
       var p=msg.payload||{};
       if(msg.type==="join"){
-        if(!hostAddGuest(conn.peer)){
-          try{ conn.send({type:"full", payload:{}}); }catch(e){}
-          setTimeout(function(){ try{ conn.close(); }catch(e){} },600);
-          return;
-        }
-        try{ conn.send({type:"welcome", payload:{you:conn.peer}}); }catch(e){}
-        applyRoster(Room.roster);
-        hostBroadcastRoster();
-        netSendTo(conn.peer,{type:"roster", payload:{players:Room.roster}});
-        // El recién llegado recibe el formato de la serie y el reorden
-        // elegidos por el anfitrión, y el marcador si la serie va empezada.
-        netSendTo(conn.peer,{type:"series_config", payload:{total:Series.total, reorder:reorderOn}});
-        if(Series.played>0) netSendTo(conn.peer,{type:"series_update", payload:{match:Room.currentMatch, wins:Series.wins, totals:Series.totals, played:Series.played, over:Series.over, championId:Series.championId}});
+        hostGreet(conn);
+      }
+      else if(msg.type==="start_ack"){
+        if(p.match) Room.acks[conn.peer]=p.match; // este invitado SÍ entró en la partida
       }
       else if(msg.type==="place"){
         if(typeof p.shape==="number") rivalPlaced(p.from, p.shape, p.count);
@@ -2190,6 +2273,7 @@ body{background:var(--bg)}
       Series.over=false; Series.championId=null;
       Series.currentGame=p.game||(Series.played+1);
       applySeriesConfigUI();
+      Room.send("start_ack",{from:Room.myId, match:p.match}); // confirmo al anfitrión que he entrado
       startOnlineMatch(p.match, p.seed);
     }
     else if(msg.type==="series_config"){
@@ -2238,6 +2322,7 @@ body{background:var(--bg)}
       Room.code=code; Room.amHost=asHost; Room.connected=false;
       if(!isRetry){ Room.match=0; Room.currentMatch=0; resetSeries(); } // al reconectar se conserva la numeración: si volviera a 1, los invitados descartarían el siguiente inicio como duplicado
       Room.playersMap={}; Room.leaderName=null; Room.winnerId=null; Room.roster=[];
+      Room.idRetries=0; Room.seekRetries=0; Room.acks={};
       Room.joinedAt=Date.now();
       lobbyShow();
       $("roomCodeBig").textContent=code;
@@ -2254,38 +2339,63 @@ body{background:var(--bg)}
   }
   function createHostPeer(code){
     var peer;
-    try{ peer=new window.Peer(hostPeerId(code)); }
+    try{ peer=newPeer(hostPeerId(code)); }
     catch(e){ Room.joining=false; scheduleRetry(); return; }
     Room.peer=peer;
     peer.on("open",function(id){
       if(peer!==Room.peer) return;
-      Room.myId=id; Room.connected=true; Room.joining=false; Room.retries=0;
+      Room.myId=id; Room.connected=true; Room.joining=false; Room.retries=0; Room.idRetries=0;
       var rb1=$("btnRetryConn"); if(rb1) rb1.style.display="none";
-      Room.roster=[{id:id, host:true}];
+      // La lista solo nace vacía la primera vez: si esto es una
+      // reconexión de la señalización, los invitados que ya están NO
+      // se borran (antes la lista volvía a 1 y «desaparecían»).
+      if(!Room.roster.length){ Room.roster=[{id:id, host:true}]; }
+      else if(!Room.roster.some(function(e){ return e.id===id; })){ Room.roster.unshift({id:id, host:true}); }
       applyRoster(Room.roster);
+      hostBroadcastRoster(); // reafirma la lista ante todos, por si acaso
     });
     peer.on("connection",function(conn){
       if(peer!==Room.peer) return;
-      // La conexión puede tardar un instante en abrirse: se atiende
-      // al abrir, que es cuando el invitado manda su «join».
-      if(conn.open){ hostOnConnection(conn); }
-      else conn.on("open",function(){ if(peer===Room.peer) hostOnConnection(conn); });
+      // Se escucha desde que la conexión llega (el «join» no espera)
+      // y el anfitrión saluda en cuanto el canal abre, mande o no
+      // mande el invitado su «join»: nadie se queda sin entrar.
+      hostOnConnection(conn);
+      if(conn.open){ hostGreet(conn); }
+      else conn.on("open",function(){ if(peer===Room.peer) hostGreet(conn); });
     });
     peer.on("error",function(err){
       if(peer!==Room.peer) return;
       var type=(err&&err.type)||"";
       Room.lastError=type||"error de red";
       if(type==="unavailable-id"){
-        // Ese código ya lo tiene otra sala abierta: se genera otro
-        // código y se crea la sala con él, sin molestar al anfitrión.
+        // Lo normal: el registro anterior de ESTA misma sala aún no
+        // ha caducado en el punto de encuentro (p. ej. el anfitrión
+        // volvió de WhatsApp y su sala se recreó). Cambiar de código
+        // aquí era el fallo: los invitados se quedaban con un código
+        // muerto. Se reintenta con el MISMO código unas veces…
+        Room.idRetries=(Room.idRetries||0)+1;
+        if(Room.idRetries<=5){
+          lobbyStatus("Tu código "+Room.code+" aún figura como ocupado por tu intento anterior. Reintentando con el MISMO código… ("+Room.idRetries+" de 5)","");
+          var sameCode=Room.code;
+          teardownPeer();
+          setTimeout(function(){
+            if(Room.leaving || mode!=="online" || Room.code!==sameCode) return;
+            Room.joining=true;
+            createHostPeer(sameCode);
+          },1500);
+          return;
+        }
+        // …y solo si otro anfitrión tiene de verdad ese código en
+        // uso se cambia, AVISANDO de que hay que compartir el nuevo.
         var newCode=genCode();
-        Room.code=newCode;
+        Room.code=newCode; Room.idRetries=0;
         $("roomCodeBig").textContent=newCode;
         storeRoom();
         var waText2="¡Te reto a Perfect! Abre el juego, elige «Online · hasta 8», pulsa «Unirme a la sala» y escribe este código: "+newCode+" — cabemos hasta 8 jugadores.";
         $("btnWhats").href="https://wa.me/?text="+encodeURIComponent(waText2);
         teardownPeer();
         createHostPeer(newCode);
+        lobbyStatus("Ojo: el código anterior estaba ocupado por otra sala abierta, así que tu sala tiene ahora el código "+newCode+". Comparte ESTE código nuevo: el anterior ya no lleva a tu sala.","err");
         return;
       }
       Room.joining=false; Room.connected=false;
@@ -2298,7 +2408,7 @@ body{background:var(--bg)}
   }
   function createGuestPeer(code){
     var peer;
-    try{ peer=new window.Peer(); }
+    try{ peer=newPeer(); }
     catch(e){ Room.joining=false; scheduleRetry(); return; }
     Room.peer=peer;
     peer.on("open",function(id){
@@ -2308,22 +2418,44 @@ body{background:var(--bg)}
       try{ conn=peer.connect(hostPeerId(code),{reliable:true}); }
       catch(e){ Room.joining=false; scheduleRetry(); return; }
       Room.hostConn=conn;
-      // Si la sala no existe, la conexión nunca se abre: aviso claro
-      // en vez de quedarse esperando en un canal vacío.
+      // Si la sala no responde, la conexión nunca se abre: se
+      // reintenta solo (con el ciclo de scheduleRetry) en vez de
+      // quedarse esperando en un canal vacío para siempre.
       if(Room.watchdog) clearTimeout(Room.watchdog);
       Room.watchdog=setTimeout(function(){
         Room.watchdog=null;
         if(!Room.code||Room.amHost||Room.connected) return;
+        Room.lastError="la sala no respondió";
         Room.joining=false;
-        lobbyStatus("No se encuentra ninguna sala con el código "+Room.code+". Comprueba que el anfitrión la ha creado ya (su móvil hace de servidor: tiene que tener el juego abierto en la sala) y que el código coincide letra a letra.","err");
-        var rb=$("btnRetryConn"); if(rb) rb.style.display="";
+        scheduleRetry();
       },10000);
       conn.on("open",function(){
         if(peer!==Room.peer) return;
-        Room.connected=true; Room.joining=false; Room.retries=0;
+        Room.connected=true; Room.joining=false; Room.retries=0; Room.seekRetries=0;
         var rb2=$("btnRetryConn"); if(rb2) rb2.style.display="none";
         try{ conn.send({type:"join", payload:{}}); }catch(e){}
         lobbyStatus("Conectado con el anfitrión. Esperando la lista de jugadores…","");
+        // El «join» se reenvía cada 1,5 s hasta que la lista llega:
+        // un solo mensaje perdido ya no deja a nadie fuera.
+        if(Room.joinTimer) clearInterval(Room.joinTimer);
+        var joinTries=0;
+        Room.joinTimer=setInterval(function(){
+          joinTries++;
+          if(!Room.hostConn || Room.hostConn!==conn || !conn.open || Room.roster.length || joinTries>10){
+            clearInterval(Room.joinTimer); Room.joinTimer=null; return;
+          }
+          try{ conn.send({type:"join", payload:{}}); }catch(e){}
+        },1500);
+        // Y si aun así la lista no llega en 12 s, la conexión se
+        // rehace sola: colgarse en «esperando la lista» era el fallo
+        // que dejaba fuera al segundo, tercer… invitado.
+        if(Room.rosterWait) clearTimeout(Room.rosterWait);
+        Room.rosterWait=setTimeout(function(){
+          Room.rosterWait=null;
+          if(!Room.code||Room.amHost||Room.roster.length) return;
+          Room.lastError="conectó con el anfitrión pero la sala no respondió";
+          scheduleRetry();
+        },12000);
       });
       conn.on("data",function(msg){ if(peer===Room.peer) guestOnData(msg); });
       conn.on("close",function(){
@@ -2344,6 +2476,18 @@ body{background:var(--bg)}
       Room.lastError=type||"error de red";
       if(type==="peer-unavailable"){
         if(Room.watchdog){ clearTimeout(Room.watchdog); Room.watchdog=null; }
+        // «No consta» puede ser solo un instante: el anfitrión está
+        // creando la sala o recreándola tras volver de WhatsApp
+        // (su registro tarda unos segundos en reaparecer). Declarar
+        // «sala no encontrada» al primer intento era el otro fallo
+        // del enlace nuevo: se sigue buscando un rato antes de rendirse.
+        Room.seekRetries=(Room.seekRetries||0)+1;
+        if(Room.seekRetries<=6 && Date.now()-(Room.joinedAt||0)<30000){
+          Room.joining=false;
+          lobbyStatus("Buscando la sala "+Room.code+"… Si el anfitrión la está creando o reconectando, tarda unos segundos. Reintentando ("+Room.seekRetries+")…","");
+          scheduleRetry();
+          return;
+        }
         Room.joining=false;
         lobbyStatus("No se encuentra ninguna sala con el código "+Room.code+". Comprueba que el anfitrión la ha creado ya (su móvil hace de servidor: tiene que tener el juego abierto en la sala) y que el código coincide letra a letra.","err");
         var rb3=$("btnRetryConn"); if(rb3) rb3.style.display="";
@@ -2383,10 +2527,23 @@ body{background:var(--bg)}
   // contigo (tu móvil es el servidor); los invitados se reconectan.
   document.addEventListener("visibilitychange",function(){
     if(document.hidden) return;
-    if(mode==="online" && Room.code && !Room.connected && !Room.joining && !Room.leaving){
-      Room.retries=0;
-      joinRoom(Room.code, Room.amHost, true);
+    if(mode!=="online" || !Room.code || Room.connected || Room.joining || Room.leaving) return;
+    if(Room.amHost && Room.peer && !Room.peer.destroyed){
+      // Anfitrión volviendo (p. ej. de compartir el código): primero
+      // se intenta reconectar la señalización SIN tocar la sala —
+      // destruir y recrear el Peer aquí era lo que cambiaba el
+      // código y dejaba a los invitados buscando una sala muerta.
+      try{ Room.peer.reconnect(); }catch(e){}
+      setTimeout(function(){
+        if(mode==="online" && Room.code && Room.amHost && !Room.connected && !Room.joining && !Room.leaving){
+          Room.retries=0;
+          joinRoom(Room.code, true, true);
+        }
+      },2500);
+      return;
     }
+    Room.retries=0;
+    joinRoom(Room.code, Room.amHost, true);
   });
 
   // ---------- MODE TABS ----------
@@ -2478,7 +2635,7 @@ body{background:var(--bg)}
   });
   $("btnCreateRoom").addEventListener("click",function(){ joinRoom(genCode(), true); });
   $("btnJoinRoom").addEventListener("click",function(){
-    var code=($("joinCode").value||"").toUpperCase().replace(/[^A-Z0-9]/g,"");
+    var code=($("joinCode").value||"").replace(/[^0-9]/g,"");
     if(code.length!==4){ $("joinCode").focus(); $("joinCode").style.borderColor="#e8322a"; setTimeout(function(){ $("joinCode").style.borderColor=""; },1200); return; }
     joinRoom(code, false);
   });
@@ -2499,14 +2656,16 @@ body{background:var(--bg)}
   $("btnLeaveRoom").addEventListener("click",function(){ leaveRoom(false); });
   $("btnRejoin").addEventListener("click",function(){
     var saved=storedRoom();
-    if(saved&&saved.code) joinRoom(saved.code, !!saved.host, false);
+    if(saved&&saved.code&&/^\d{4}$/.test(saved.code)) joinRoom(saved.code, !!saved.host, false);
   });
 
   // Si la página se recargó a mitad de una sala (el móvil la descarta
   // al cambiar de app), se ofrece volver a la MISMA sala con un toque,
-  // en vez de perderla como pasaba antes.
+  // en vez de perderla como pasaba antes. Solo valen códigos de 4
+  // números: uno viejo con letras es de una versión anterior y esa
+  // sala ya no existe, así que ni se ofrece.
   var savedRoom=storedRoom();
-  if(savedRoom&&savedRoom.code){
+  if(savedRoom&&savedRoom.code&&/^\d{4}$/.test(savedRoom.code)){
     setMode("online");
     $("rejoinCode").textContent=savedRoom.code;
     $("btnRejoin").style.display="";
