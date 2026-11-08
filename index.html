@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8" />
-<!-- perfect-build:202611082015 -->
+<!-- perfect-build:202611082030 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
@@ -62,7 +62,7 @@
    Si la comprobación falla (sin red, fetch bloqueado), no se
    toca nada y el juego arranca igual que siempre.
    ============================================================ */
-window.PERFECT_VERSION="202611082015";
+window.PERFECT_VERSION="202611082030";
 (function(){
   "use strict";
   var VERSION=window.PERFECT_VERSION;
@@ -2049,6 +2049,8 @@ body{background:var(--bg)}
     joinTimer:null, rosterWait:null, idRetries:0, seekRetries:0, acks:{},
     // v19: salud del registro del anfitrión + diagnóstico visible
     regWatch:null, regDownSince:0, hostRegistered:false, freshRoster:false,
+    // v20: control de la recuperación del registro (ver más abajo)
+    lastReconnectAt:0, regAttempts:0, peerRetryAt:0,
     seekAttempts:0, seekStartedAt:0, lastPeerError:"", lastPeerErrorAt:0, connState:"—",
     // Enviar un evento de partida: el anfitrión lo reparte a todos los
     // invitados; un invitado se lo manda al anfitrión, que lo aplica
@@ -2119,6 +2121,34 @@ body{background:var(--bg)}
   //     de sala buscado, si el anfitrión está registrado, estado
   //     de la unión y el error exacto de PeerJS con su hora —
   //     para que la próxima prueba diga el motivo real.
+  // ---------- REPARACIÓN v20 (captura de Mork, 2026-11-08) ----------
+  // La captura del anfitrión lo decía todo: sala 8898 creada, error
+  // «network — Lost connection to server.» a las 20:01:47 y, más de
+  // un minuto después, seguía «Registrado en el punto de encuentro:
+  // NO» con el aviso clavado en «Reconectando con la sala 8898…».
+  // El socket con el broker se cortó (salto a WhatsApp / cambio de
+  // red) y la recuperación se ATASCÓ. Causa exacta en el código:
+  //  1) El error «network» entraba en scheduleRetry(), que recrea
+  //     la sala con joinRoom() -> teardownPeer(), y teardownPeer()
+  //     MATABA el vigía de registro (regWatch). El vigía solo
+  //     volvía a nacer dentro del evento «open» del Peer nuevo.
+  //  2) Si ese Peer nuevo quedaba colgado en el handshake — sin
+  //     «open», sin nuevo error y sin «disconnected», lo típico
+  //     con la página congelada o la red a medio cambiar — ya no
+  //     quedaba NADIE vigilando: ni vigía, ni timeout de apertura,
+  //     ni reintentos. «Reconectando…» para siempre.
+  //  3) Cuando el vigía sí corría, llamaba reconnect() cada 4 s
+  //     sin espaciar: cada llamada reinicia el intento anterior,
+  //     que en una red móvil lenta puede no llegar a completarse.
+  // Arreglo: UNA sola vía de recuperación para el anfitrión.
+  //  - El vigía nace al CREAR el Peer (createHostPeer), no al
+  //    abrirse, y vigila también la apertura: si a los 22 s no hay
+  //    registro confirmado — caído o colgado, da igual — se
+  //    re-registra con el MISMO código, y así indefinidamente.
+  //  - El error «network» y familia (server-error, socket-error,
+  //    socket-closed) ya NO pasan por scheduleRetry: marcan la
+  //    caída y dejan trabajar al vigía, sin destruir la sala.
+  //  - reconnect() se espacia: como mucho un intento cada 8 s.
   function fmtClock(ts){
     if(!ts) return "—";
     try{ return new Date(ts).toLocaleTimeString("es-ES",{hour12:false}); }catch(e){ return "—"; }
@@ -2141,6 +2171,7 @@ body{background:var(--bg)}
     lines.push("Tu rol: "+(Room.amHost?"ANFITRIÓN (tu móvil es el servidor)":"invitado")+" · tu id: "+(Room.myId||"asignándose…"));
     if(Room.amHost){
       lines.push("Registrado en el punto de encuentro: "+(Room.hostRegistered?"SÍ — los nuevos pueden encontrarte":"NO — los nuevos NO pueden encontrarte ahora mismo; el vigía lo está reintentando"));
+      if(!Room.hostRegistered && Room.regDownSince) lines.push("Sin registro desde hace "+Math.round((Date.now()-Room.regDownSince)/1000)+" s · re-registros intentados: "+(Room.regAttempts||0));
     } else {
       lines.push("Estado de tu unión: "+Room.connState);
       if(Room.seekStartedAt && !Room.connected){
@@ -2158,22 +2189,39 @@ body{background:var(--bg)}
     Room.regWatch=setInterval(function(){ hostRegCheck(false); },4000);
   }
   function hostRegCheck(fromEvent){
-    if(mode!=="online" || !Room.amHost || !Room.code || Room.leaving || Room.joining) return;
+    // v20: el vigía trabaja SIEMPRE que haya sala de anfitrión,
+    // también mientras la unión está «en curso» (Room.joining):
+    // una apertura colgada dejaba joining=true para siempre y la
+    // versión anterior se inhibía justo en ese caso.
+    if(mode!=="online" || !Room.amHost || !Room.code || Room.leaving) return;
     var p=Room.peer;
-    if(!p || p.destroyed){ hostReregister("el registro se había destruido"); return; }
-    if(p.disconnected){
-      Room.hostRegistered=false;
-      if(!Room.regDownSince) Room.regDownSince=Date.now();
-      try{ p.reconnect(); }catch(e){}
-      renderDiag();
-      if(Date.now()-Room.regDownSince>20000) hostReregister("más de 20 s sin registro en el punto de encuentro");
-    } else if(Room.regDownSince){
-      Room.regDownSince=0; Room.hostRegistered=true; renderDiag();
+    if(!p){
+      if(Date.now()<(Room.peerRetryAt||0)) return; // ya hay una recreación con el mismo código en marcha (p. ej. tras «unavailable-id»)
+      hostReregister("el registro se había destruido");
+      return;
     }
+    if(p.destroyed){ hostReregister("el registro se había destruido"); return; }
+    if(Room.hostRegistered && !p.disconnected){
+      if(Room.regDownSince){ Room.regDownSince=0; renderDiag(); }
+      return;
+    }
+    // Sin registro confirmado: el socket cayó (disconnected) o la
+    // apertura nunca llegó a completarse. Se anota cuándo empezó
+    // la caída y se actúa con calma, sin machacar reconnect().
+    Room.hostRegistered=false;
+    if(!Room.regDownSince) Room.regDownSince=Date.now();
+    var downFor=Date.now()-Room.regDownSince;
+    renderDiag();
+    if(p.disconnected && Date.now()-(Room.lastReconnectAt||0)>=8000){
+      Room.lastReconnectAt=Date.now();
+      try{ p.reconnect(); }catch(e){}
+    }
+    if(downFor>22000) hostReregister("más de 22 s sin registro en el punto de encuentro");
   }
   function hostReregister(reason){
     if(!Room.amHost || !Room.code || Room.leaving) return;
     var code=Room.code;
+    Room.regAttempts=(Room.regAttempts||0)+1;
     Room.regDownSince=0; Room.hostRegistered=false; Room.connected=false;
     Room.freshRoster=true; // la lista nace limpia: los invitados vuelven a entrar al reconectarse, sin fantasmas que ocupen plazas
     Object.keys(Room.conns).forEach(function(pid){ try{ Room.conns[pid].close(); }catch(e){} });
@@ -2482,11 +2530,15 @@ body{background:var(--bg)}
     try{ peer=newPeer(hostPeerId(code)); }
     catch(e){ Room.joining=false; scheduleRetry(); return; }
     Room.peer=peer;
+    // v20: el vigía nace AL CREAR el Peer, no al abrirse. Antes solo
+    // arrancaba en el «open» de abajo (startRegWatch tras registrar):
+    // un Peer colgado en el handshake se quedaba sin vigía y sin
+    // recuperación posible — el «Reconectando…» eterno de la captura.
+    startRegWatch();
     peer.on("open",function(id){
       if(peer!==Room.peer) return;
       Room.myId=id; Room.connected=true; Room.joining=false; Room.retries=0; Room.idRetries=0;
-      Room.hostRegistered=true; Room.regDownSince=0; // REGISTRADO: los invitados nuevos ya pueden encontrar la sala
-      startRegWatch();
+      Room.hostRegistered=true; Room.regDownSince=0; Room.regAttempts=0; // REGISTRADO: los invitados nuevos ya pueden encontrar la sala
       var rb1=$("btnRetryConn"); if(rb1) rb1.style.display="none";
       // Tras un re-registro completo la lista nace limpia (los
       // invitados se reconectan solos y vuelven a entrar); en una
@@ -2524,6 +2576,7 @@ body{background:var(--bg)}
         if(Room.idRetries<=5){
           lobbyStatus("Tu código "+Room.code+" aún figura como ocupado por tu intento anterior. Reintentando con el MISMO código… ("+Room.idRetries+" de 5)","");
           var sameCode=Room.code;
+          Room.peerRetryAt=Date.now()+1600; // el vigía no se adelanta a esta recreación ya programada
           teardownPeer();
           setTimeout(function(){
             if(Room.leaving || mode!=="online" || Room.code!==sameCode) return;
@@ -2544,6 +2597,21 @@ body{background:var(--bg)}
         lobbyStatus("Ojo: el código anterior estaba ocupado por otra sala abierta, así que tu sala tiene ahora el código "+newCode+". Comparte ESTE código nuevo: el anterior ya no lleva a tu sala.","err");
         return;
       }
+      if(type==="network"||type==="server-error"||type==="socket-error"||type==="socket-closed"){
+        // v20 — el error de la captura («network — Lost connection
+        // to server.»): el socket con el punto de encuentro se ha
+        // cortado. Antes esto entraba en scheduleRetry(), que
+        // destruía el Peer, mataba el vigía y reseteaba la sala,
+        // y si el Peer nuevo se colgaba al abrir ya no lo reparaba
+        // nadie. Ahora solo se marca la caída y el vigía — que ya
+        // corre desde la creación — reconecta espaciado y, si la
+        // caída pasa de 22 s, re-registra con el MISMO código.
+        Room.hostRegistered=false; Room.connected=false; Room.joining=false;
+        if(!Room.regDownSince) Room.regDownSince=Date.now();
+        renderDiag();
+        lobbyStatus("Se ha cortado la conexión con el punto de encuentro, por eso los jugadores nuevos no encuentran la sala. Tu registro se está reconectando solo, con el mismo código "+Room.code+": no cierres el juego ni cambies de app.","err");
+        return;
+      }
       Room.joining=false; Room.connected=false;
       scheduleRetry();
     });
@@ -2555,6 +2623,7 @@ body{background:var(--bg)}
       // del fallo). Se reconecta ya y el vigía insiste cada 4 s.
       Room.hostRegistered=false;
       if(!Room.regDownSince) Room.regDownSince=Date.now();
+      Room.lastReconnectAt=Date.now(); // el vigía no repite reconnect() hasta pasados 8 s
       renderDiag();
       try{ peer.reconnect(); }catch(e){}
     });
@@ -2564,8 +2633,21 @@ body{background:var(--bg)}
     try{ peer=newPeer(); }
     catch(e){ Room.joining=false; scheduleRetry(); return; }
     Room.peer=peer;
+    // v20: si la apertura del propio Peer del invitado se cuelga
+    // (sin «open» ni error, red a medio cambiar), antes no había
+    // ningún temporizador armado todavía — el watchdog nace dentro
+    // del «open» — y la búsqueda quedaba clavada. A los 12 s sin
+    // abrir, se reintenta la unión como cualquier otro fallo.
+    var guestOpened=false;
+    setTimeout(function(){
+      if(peer!==Room.peer || guestOpened || Room.leaving) return;
+      Room.lastError="el punto de encuentro no respondió";
+      Room.joining=false;
+      scheduleRetry();
+    },12000);
     peer.on("open",function(id){
       if(peer!==Room.peer) return;
+      guestOpened=true;
       Room.myId=id;
       var conn;
       try{ conn=peer.connect(hostPeerId(code),{reliable:true}); }
