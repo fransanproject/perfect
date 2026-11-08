@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8" />
-<!-- perfect-build:202611082000 -->
+<!-- perfect-build:202611082015 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
@@ -62,7 +62,7 @@
    Si la comprobación falla (sin red, fetch bloqueado), no se
    toca nada y el juego arranca igual que siempre.
    ============================================================ */
-window.PERFECT_VERSION="202611082000";
+window.PERFECT_VERSION="202611082015";
 (function(){
   "use strict";
   var VERSION=window.PERFECT_VERSION;
@@ -1153,7 +1153,7 @@ body{background:var(--bg)}
         <div class="lobby-status" id="lobbyHomeStatus" style="display:none"></div>
       </div>
       <div id="lobbyRoom" style="display:none">
-        <div style="font-weight:900;font-size:11px;letter-spacing:.08em;color:var(--muted)">CÓDIGO DE TU SALA — PÁSASELO A TUS AMIGOS (HASTA 8 JUGADORES)</div>
+        <div style="font-weight:900;font-size:11px;letter-spacing:.08em;color:var(--muted)">TU SALA — INVITA CON EL ENLACE DE WHATSAPP Y ENTRARÁN SOLOS (HASTA 8 JUGADORES)</div>
         <div class="room-code" id="roomCodeBig">····</div>
         <div class="online-actions" style="margin-top:2px">
           <button class="btn btn-ghost" id="btnCopyCode" style="font-size:13.5px;padding:8px 14px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span id="copyLabel">Copiar código</span></button>
@@ -1178,7 +1178,7 @@ body{background:var(--bg)}
           <button class="btn btn-ghost" id="btnRetryConn" style="display:none;font-size:14px;padding:10px 18px">Reintentar conexión</button>
           <button class="btn btn-ghost" id="btnLeaveRoom">Salir de la sala</button>
         </div>
-        <p style="font-size:13px;margin-top:8px" id="lobbyHint">El anfitrión (quien crea la sala) pulsa «Empezar partida» cuando ya esté dentro quien quieras — de 2 a 8 jugadores. Todos juegan el mismo tablero a la vez, cada uno con sus piezas.</p>
+        <p style="font-size:13px;margin-top:8px" id="lobbyHint">El botón verde de WhatsApp manda un enlace directo a esta sala: quien lo abre entra solo, sin escribir el código. El anfitrión (quien crea la sala) pulsa «Empezar partida» cuando ya esté dentro quien quieras — de 2 a 8 jugadores. Todos juegan el mismo tablero a la vez, cada uno con sus piezas.</p>
       </div>
     </div>
   </div>
@@ -1947,6 +1947,17 @@ body{background:var(--bg)}
   // cuenta ni proyecto, y durante la partida los datos van de móvil
   // a móvil sin pasar por ningún servidor. Sin Supabase.
   function hostPeerId(code){ return "perfect-"+code; } // id del anfitrión: perfect-NNNN con el código de 4 números
+  // Invitación directa por WhatsApp (petición de Mork): el botón verde
+  // comparte un ENLACE que lleva el código dentro (?v=<versión>&sala=NNNN),
+  // no un mensaje con el código para teclear. Quien abre ese enlace entra
+  // solo en la sala (ver la entrada automática al final de este script).
+  var PUBLIC_GAME_URL="https://fransanproject.github.io/perfect/";
+  function inviteLink(code){ return PUBLIC_GAME_URL+"?v="+(window.PERFECT_VERSION||"")+"&sala="+code; }
+  function setWhatsLink(code){
+    var b=$("btnWhats"); if(!b||!code) return;
+    var text="Únete a mi partida de Perfect: "+inviteLink(code);
+    b.href="https://wa.me/?text="+encodeURIComponent(text);
+  }
   // Reparación 2026-11-08 (salas con más de un invitado): tres fallos
   // encadenados dejaban fuera a los invitados 2..8 y hacían que los
   // jugadores nuevos «no encontraran» salas que sí existían:
@@ -2187,6 +2198,7 @@ body{background:var(--bg)}
     Room.retries++;
     if(Room.retries>MAX_RETRIES){
       Room.joining=false;
+      var jcFill=$("joinCode"); if(jcFill && Room.code) jcFill.value=Room.code; // el código queda rellenado para reintentar a mano
       if(Room.lastError==="peer-unavailable"){
         lobbyStatus("No se encuentra ninguna sala con el código "+Room.code+". Comprueba que el anfitrión la ha creado ya (su móvil hace de servidor: tiene que tener el juego abierto en la sala) y que el código coincide letra a letra.","err");
       } else {
@@ -2279,7 +2291,7 @@ body{background:var(--bg)}
     if(Room.players>=2){
       lobbyStatus(Room.amHost ? "Sois "+Room.players+" de "+MAX_PLAYERS+" en la sala. Cuando quieras, pulsa «Empezar partida»." : "¡Estás dentro! Sois "+Room.players+" de "+MAX_PLAYERS+". El anfitrión lanzará la partida.","ok");
     } else if(Room.amHost){
-      lobbyStatus("Sala creada (1 de "+MAX_PLAYERS+"). Tu móvil es el servidor de esta sala: déjalo con el juego abierto mientras jugáis. Pásales el código "+Room.code+" — por WhatsApp con el botón verde.","");
+      lobbyStatus("Sala creada (1 de "+MAX_PLAYERS+"). Tu móvil es el servidor de esta sala: déjalo con el juego abierto mientras jugáis. Mándales el enlace con el botón verde de WhatsApp: entrarán directamente en la sala sin escribir el código.","");
     } else {
       lobbyStatus("Estás dentro de la sala. Esperando a que el anfitrión empiece…","");
     }
@@ -2457,9 +2469,9 @@ body{background:var(--bg)}
       renderSelfOnly(); // te ves dentro de la sala desde el primer segundo
       renderDiag(); // el diagnóstico se ve desde el primer segundo de la unión
       var rb0=$("btnRetryConn"); if(rb0) rb0.style.display="none";
-      // Botón de WhatsApp: lleva el código y los pasos, sin enlaces raros
-      var waText="¡Te reto a Perfect! Abre el juego, elige «Online · hasta 8», pulsa «Unirme a la sala» y escribe este código: "+code+" — cabemos hasta 8 jugadores.";
-      $("btnWhats").href="https://wa.me/?text="+encodeURIComponent(waText);
+      // Botón de WhatsApp: enlace DIRECTO de invitación con el código
+      // dentro (&sala=NNNN): quien lo abre entra solo en esta sala.
+      setWhatsLink(code);
       lobbyStatus(isRetry ? "Reconectando con la sala "+code+"…" : (asHost ? "Creando tu sala "+code+"…" : "Buscando la sala "+code+"…"),"");
       if(asHost) createHostPeer(code);
       else createGuestPeer(code);
@@ -2526,8 +2538,7 @@ body{background:var(--bg)}
         Room.code=newCode; Room.idRetries=0;
         $("roomCodeBig").textContent=newCode;
         storeRoom();
-        var waText2="¡Te reto a Perfect! Abre el juego, elige «Online · hasta 8», pulsa «Unirme a la sala» y escribe este código: "+newCode+" — cabemos hasta 8 jugadores.";
-        $("btnWhats").href="https://wa.me/?text="+encodeURIComponent(waText2);
+        setWhatsLink(newCode);
         teardownPeer();
         createHostPeer(newCode);
         lobbyStatus("Ojo: el código anterior estaba ocupado por otra sala abierta, así que tu sala tiene ahora el código "+newCode+". Comparte ESTE código nuevo: el anterior ya no lleva a tu sala.","err");
@@ -2649,8 +2660,9 @@ body{background:var(--bg)}
         }
         Room.joining=false;
         Room.connState="búsqueda agotada (90 s)";
+        var jcFill2=$("joinCode"); if(jcFill2) jcFill2.value=Room.code; // código rellenado en el campo de unirse para reintentarlo a mano
         renderDiag();
-        lobbyStatus("No se encuentra ninguna sala con el código "+Room.code+" tras 90 s buscando el id "+hostPeerId(Room.code)+". Último error de PeerJS: "+(Room.lastPeerError||"peer-unavailable")+". Esto significa que el móvil del anfitrión NO está registrado ahora mismo: pídele que vuelva al juego, con la sala abierta en pantalla (sin cambiar de app), y pulsa «Reintentar conexión». El diagnóstico de abajo lo confirma: en su móvil debe decir «Registrado en el punto de encuentro: SÍ».","err");
+        lobbyStatus("No se encuentra ninguna sala con el código "+Room.code+" tras 90 s buscando el id "+hostPeerId(Room.code)+". Último error de PeerJS: "+(Room.lastPeerError||"peer-unavailable")+". Esto significa que el móvil del anfitrión NO está registrado ahora mismo: pídele que vuelva al juego, con la sala abierta en pantalla (sin cambiar de app), y pulsa «Reintentar conexión». El código "+Room.code+" queda ya escrito en el campo de unirse, por si quieres reintentarlo a mano. El diagnóstico de abajo lo confirma: en su móvil debe decir «Registrado en el punto de encuentro: SÍ».","err");
         var rb3=$("btnRetryConn"); if(rb3) rb3.style.display="";
         return;
       }
@@ -2839,8 +2851,34 @@ body{background:var(--bg)}
   // en vez de perderla como pasaba antes. Solo valen códigos de 4
   // números: uno viejo con letras es de una versión anterior y esa
   // sala ya no existe, así que ni se ofrece.
+  // INVITACIÓN DIRECTA: si el enlace trae ?sala=NNNN (también se
+  // acepta &room=, &codigo= o &code=), el juego abre la pestaña
+  // online, rellena el código solo y se une automáticamente a esa
+  // sala, sin que el amigo tenga que teclear nada. Este juego no
+  // usa nombres propios (cada uno entra como «Jugador N» en la
+  // lista), así que no hay nombre que pedir: la entrada es directa.
+  // Si la sala no se encuentra, el aviso de error de la búsqueda
+  // (90 s) lo dice claro en el vestíbulo y el código queda escrito
+  // en el campo de unirse para reintentarlo a mano.
+  var inviteCode=null, inviteRaw="";
+  try{
+    var qsInvite=new URLSearchParams(window.location.search);
+    inviteRaw=qsInvite.get("sala")||qsInvite.get("room")||qsInvite.get("codigo")||qsInvite.get("code")||"";
+    var inviteDigits=(""+inviteRaw).replace(/[^0-9]/g,"");
+    if(/^\d{4}$/.test(inviteDigits)) inviteCode=inviteDigits;
+  }catch(e){}
   var savedRoom=storedRoom();
-  if(savedRoom&&savedRoom.code&&/^\d{4}$/.test(savedRoom.code)){
+  if(inviteCode){
+    setMode("online");
+    var jcInvite=$("joinCode"); if(jcInvite) jcInvite.value=inviteCode;
+    homeStatus("Invitación recibida: entrando en la sala "+inviteCode+"…","");
+    setTimeout(function(){
+      if(!Room.code && !Room.joining) joinRoom(inviteCode,false);
+    },350);
+  } else if(inviteRaw){
+    setMode("online");
+    homeStatus("El enlace de invitación no trae un código de sala válido de 4 números. Pide al anfitrión que te mande el enlace de nuevo, o escribe el código a mano.","err");
+  } else if(savedRoom&&savedRoom.code&&/^\d{4}$/.test(savedRoom.code)){
     setMode("online");
     $("rejoinCode").textContent=savedRoom.code;
     $("btnRejoin").style.display="";
