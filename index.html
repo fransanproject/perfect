@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8" />
-<!-- perfect-build:202611081945 -->
+<!-- perfect-build:202611082000 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
@@ -62,7 +62,7 @@
    Si la comprobación falla (sin red, fetch bloqueado), no se
    toca nada y el juego arranca igual que siempre.
    ============================================================ */
-window.PERFECT_VERSION="202611081945";
+window.PERFECT_VERSION="202611082000";
 (function(){
   "use strict";
   var VERSION=window.PERFECT_VERSION;
@@ -958,6 +958,24 @@ body{background:var(--bg)}
 #reorderWarn.done{background:var(--board)}
 #reorderChip{display:none;font-weight:900;font-size:11px;color:var(--player-dark);background:#fdecec;border:1px solid #f3b3b3;border-radius:999px;padding:2px 9px;white-space:nowrap}
 @media (prefers-color-scheme: dark){ #reorderChip{background:#33151a;border-color:#6e2530;color:#ffb4ab} }
+#reorderChip{display:none}
+</style>
+<style id="fix-diag-salas">
+/* ============================================================
+   v19 — DIAGNÓSTICO VISIBLE DE SALA (petición tras el fallo
+   «solo entra quien ya se unió ayer»): el vestíbulo muestra
+   versión, sala e id del anfitrión, si el anfitrión está
+   registrado en el punto de encuentro y el error EXACTO de
+   PeerJS cuando una unión falla, en vez de un genérico
+   «no se encuentra la sala».
+   ============================================================ */
+.lobby-diag{
+  text-align:left; white-space:pre-line; word-break:break-word;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:11.5px; line-height:1.55; font-weight:600;
+  background:var(--panel2); border:1px solid var(--border); border-radius:10px;
+  color:var(--muted); padding:8px 11px; margin:8px 0 2px;
+}
 </style>
 </head>
 <body>
@@ -1142,6 +1160,7 @@ body{background:var(--bg)}
           <a class="btn btn-whats" id="btnWhats" href="#" target="_blank" rel="noopener" style="font-size:13.5px;padding:8px 14px"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.04 2a9.9 9.9 0 0 0-8.4 15.2L2.1 22l4.9-1.5A9.9 9.9 0 1 0 12.04 2zm0 18.1a8.2 8.2 0 0 1-4.2-1.1l-.3-.2-2.9.9.9-2.8-.2-.3a8.2 8.2 0 1 1 6.7 3.5zm4.6-6.1c-.3-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4 0-.5.2-.7l.5-.6c.1-.2.1-.4 0-.5l-.8-1.9c-.2-.5-.4-.4-.6-.4h-.5c-.2 0-.5.1-.7.3-.9.9-1.1 2.2-.2 3.9a11.6 11.6 0 0 0 4.5 4.2c1.7.8 2.4.9 3.2.7.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.1-1.2 0-.1-.2-.2-.5-.3z"/></svg>Enviar por WhatsApp</a>
         </div>
         <div class="lobby-status" id="lobbyStatus">Conectando con la sala…</div>
+        <div class="lobby-diag" id="lobbyDiag" style="display:none" aria-label="Diagnóstico de conexión"></div>
         <div id="lobbyPlayers" aria-label="Jugadores en la sala"></div>
         <div class="series-config" id="seriesConfig">
           <span>Serie — gana quien gane la mayoría de partidas</span>
@@ -2017,6 +2036,9 @@ body{background:var(--bg)}
     playersMap:{}, leaderName:null, winnerId:null,
     retries:0, retryTimer:null, watchdog:null, joining:false, leaving:false, joinedAt:0, lastError:"",
     joinTimer:null, rosterWait:null, idRetries:0, seekRetries:0, acks:{},
+    // v19: salud del registro del anfitrión + diagnóstico visible
+    regWatch:null, regDownSince:0, hostRegistered:false, freshRoster:false,
+    seekAttempts:0, seekStartedAt:0, lastPeerError:"", lastPeerErrorAt:0, connState:"—",
     // Enviar un evento de partida: el anfitrión lo reparte a todos los
     // invitados; un invitado se lo manda al anfitrión, que lo aplica
     // y lo retransmite a los demás.
@@ -2051,6 +2073,104 @@ body{background:var(--bg)}
   };
   function lobbyStatus(text,kind){
     var el=$("lobbyStatus"); el.textContent=text; el.className="lobby-status"+(kind?" "+kind:"");
+  }
+  // ---------- DIAGNÓSTICO VISIBLE DE SALA (v19) ----------
+  // Reparación 2026-11-08, segunda vuelta — el dato nuevo descarta
+  // la caché: TODOS abrían con el enlace nuevo y la misma versión,
+  // y aun así solo entraba quien ya se había unido antes; los
+  // nuevos recibían «no se encuentra la sala». Ese patrón NO es un
+  // problema de versión: es el REGISTRO del anfitrión en el punto
+  // de encuentro de PeerJS. Quien ya entró tiene un canal WebRTC
+  // directo ya abierto con el anfitrión y no necesita al broker;
+  // quien entra de nuevo SÍ: pregunta al broker por el id
+  // «perfect-NNNN» y, si el anfitrión no consta registrado en ese
+  // instante, recibe «peer-unavailable». ¿Y por qué dejaría de
+  // constar? Porque el anfitrión crea la sala y salta a WhatsApp a
+  // compartir el código: el sistema congela la página, el socket
+  // de señalización se corta EN SILENCIO (el evento «disconnected»
+  // no siempre llega en un socket muerto) y el broker da de baja
+  // el id. Al volver, nadie comprobaba ni re-registraba nada:
+  // Room.connected seguía diciendo «conectado» para siempre.
+  // Arreglos de esta versión:
+  //  1) VIGÍA DE REGISTRO del anfitrión: cada 4 s comprueba el
+  //     estado real (peer.disconnected / destroyed) y reconecta;
+  //     si lleva >20 s sin registro, recrea el Peer con el MISMO
+  //     código (la lista se rehace: los invitados se reconectan
+  //     solos con su reintento y vuelven a entrar).
+  //  2) BÚSQUEDA LARGA del invitado: «peer-unavailable» ya no se
+  //     rinde a los ~30 s ni lo corta el contador genérico de
+  //     reintentos (4): se sigue buscando hasta 90 s, que es lo
+  //     que puede tardar el anfitrión en volver de WhatsApp y
+  //     re-registrarse. El reloj de búsqueda ya no se reinicia
+  //     en cada reintento (antes joinedAt volvía a cero y las
+  //     cuentas no cuadraban nunca).
+  //  3) DIAGNÓSTICO VISIBLE en el vestíbulo (abajo): versión, id
+  //     de sala buscado, si el anfitrión está registrado, estado
+  //     de la unión y el error exacto de PeerJS con su hora —
+  //     para que la próxima prueba diga el motivo real.
+  function fmtClock(ts){
+    if(!ts) return "—";
+    try{ return new Date(ts).toLocaleTimeString("es-ES",{hour12:false}); }catch(e){ return "—"; }
+  }
+  function notePeerError(err){
+    var t=(err&&err.type)||"error";
+    var m=(err&&err.message)||"";
+    Room.lastPeerError=t+(m?" — "+m:"");
+    Room.lastPeerErrorAt=Date.now();
+    renderDiag();
+  }
+  function renderDiag(){
+    var el=$("lobbyDiag"); if(!el) return;
+    if(!Room.code){ el.style.display="none"; el.textContent=""; return; }
+    el.style.display="block";
+    var lines=[];
+    lines.push("DIAGNÓSTICO DE CONEXIÓN");
+    lines.push("Versión del juego: "+(window.PERFECT_VERSION||"—"));
+    lines.push("Sala "+Room.code+" · id del anfitrión: "+hostPeerId(Room.code));
+    lines.push("Tu rol: "+(Room.amHost?"ANFITRIÓN (tu móvil es el servidor)":"invitado")+" · tu id: "+(Room.myId||"asignándose…"));
+    if(Room.amHost){
+      lines.push("Registrado en el punto de encuentro: "+(Room.hostRegistered?"SÍ — los nuevos pueden encontrarte":"NO — los nuevos NO pueden encontrarte ahora mismo; el vigía lo está reintentando"));
+    } else {
+      lines.push("Estado de tu unión: "+Room.connState);
+      if(Room.seekStartedAt && !Room.connected){
+        lines.push("Buscando la sala desde hace "+Math.round((Date.now()-Room.seekStartedAt)/1000)+" s · intentos: "+Room.seekAttempts);
+      }
+    }
+    lines.push("Jugadores en la lista: "+Room.players+" de "+MAX_PLAYERS);
+    lines.push("Último error de PeerJS: "+(Room.lastPeerError||"ninguno")+(Room.lastPeerErrorAt?" ("+fmtClock(Room.lastPeerErrorAt)+")":""));
+    el.textContent=lines.join("\n");
+  }
+  // Vigía de registro del anfitrión: mantiene vivo el alta en el
+  // punto de encuentro, que es lo que los invitados NUEVOS buscan.
+  function startRegWatch(){
+    if(Room.regWatch) return;
+    Room.regWatch=setInterval(function(){ hostRegCheck(false); },4000);
+  }
+  function hostRegCheck(fromEvent){
+    if(mode!=="online" || !Room.amHost || !Room.code || Room.leaving || Room.joining) return;
+    var p=Room.peer;
+    if(!p || p.destroyed){ hostReregister("el registro se había destruido"); return; }
+    if(p.disconnected){
+      Room.hostRegistered=false;
+      if(!Room.regDownSince) Room.regDownSince=Date.now();
+      try{ p.reconnect(); }catch(e){}
+      renderDiag();
+      if(Date.now()-Room.regDownSince>20000) hostReregister("más de 20 s sin registro en el punto de encuentro");
+    } else if(Room.regDownSince){
+      Room.regDownSince=0; Room.hostRegistered=true; renderDiag();
+    }
+  }
+  function hostReregister(reason){
+    if(!Room.amHost || !Room.code || Room.leaving) return;
+    var code=Room.code;
+    Room.regDownSince=0; Room.hostRegistered=false; Room.connected=false;
+    Room.freshRoster=true; // la lista nace limpia: los invitados vuelven a entrar al reconectarse, sin fantasmas que ocupen plazas
+    Object.keys(Room.conns).forEach(function(pid){ try{ Room.conns[pid].close(); }catch(e){} });
+    Room.conns={};
+    if(Room.peer){ try{ Room.peer.destroy(); }catch(e){} Room.peer=null; }
+    createHostPeer(code);
+    lobbyStatus("Ojo: tu sala perdió el registro en el punto de encuentro ("+reason+"), por eso los jugadores nuevos no la encontraban. Se está volviendo a registrar con el MISMO código "+code+": que nadie cambie de código. Los que ya estaban dentro se reconectan solos.","err");
+    renderDiag();
   }
   function genCode(){
     // Código de sala: siempre 4 NÚMEROS, sin letras (pedido de Mork,
@@ -2108,6 +2228,8 @@ body{background:var(--bg)}
     if(c && c.open){ try{ c.send(msg); }catch(e){} }
   }
   function teardownPeer(){
+    if(Room.regWatch){ clearInterval(Room.regWatch); Room.regWatch=null; }
+    Room.hostRegistered=false; Room.regDownSince=0;
     if(Room.joinTimer){ clearInterval(Room.joinTimer); Room.joinTimer=null; }
     if(Room.rosterWait){ clearTimeout(Room.rosterWait); Room.rosterWait=null; }
     Object.keys(Room.conns).forEach(function(pid){
@@ -2163,6 +2285,8 @@ body{background:var(--bg)}
     }
     $("btnLobbyStart").disabled = !(Room.amHost && Room.players>=2) || playing;
     $("btnLobbyStart").textContent = seriesStartLabel();
+    if(!Room.amHost) Room.connState="dentro de la sala ("+Room.players+" jugadores)";
+    renderDiag();
     applySeriesConfigUI();
     if(rosterChanged && !playing && !finished){ buildRivalBoards(); }
     if(playing) renderRanking();
@@ -2323,11 +2447,15 @@ body{background:var(--bg)}
       if(!isRetry){ Room.match=0; Room.currentMatch=0; resetSeries(); } // al reconectar se conserva la numeración: si volviera a 1, los invitados descartarían el siguiente inicio como duplicado
       Room.playersMap={}; Room.leaderName=null; Room.winnerId=null; Room.roster=[];
       Room.idRetries=0; Room.seekRetries=0; Room.acks={};
-      Room.joinedAt=Date.now();
+      // El reloj de búsqueda SOLO nace en la unión inicial: en los
+      // reintentos se conserva, o la ventana de 90 s nunca se cierra
+      // y las cuentas del diagnóstico salen mal.
+      if(!isRetry){ Room.joinedAt=Date.now(); Room.seekStartedAt=Date.now(); Room.seekAttempts=0; Room.connState= asHost ? "registrando tu sala…" : "buscando al anfitrión…"; }
       lobbyShow();
       $("roomCodeBig").textContent=code;
       storeRoom();
       renderSelfOnly(); // te ves dentro de la sala desde el primer segundo
+      renderDiag(); // el diagnóstico se ve desde el primer segundo de la unión
       var rb0=$("btnRetryConn"); if(rb0) rb0.style.display="none";
       // Botón de WhatsApp: lleva el código y los pasos, sin enlaces raros
       var waText="¡Te reto a Perfect! Abre el juego, elige «Online · hasta 8», pulsa «Unirme a la sala» y escribe este código: "+code+" — cabemos hasta 8 jugadores.";
@@ -2345,7 +2473,13 @@ body{background:var(--bg)}
     peer.on("open",function(id){
       if(peer!==Room.peer) return;
       Room.myId=id; Room.connected=true; Room.joining=false; Room.retries=0; Room.idRetries=0;
+      Room.hostRegistered=true; Room.regDownSince=0; // REGISTRADO: los invitados nuevos ya pueden encontrar la sala
+      startRegWatch();
       var rb1=$("btnRetryConn"); if(rb1) rb1.style.display="none";
+      // Tras un re-registro completo la lista nace limpia (los
+      // invitados se reconectan solos y vuelven a entrar); en una
+      // reconexión de señalización normal, la lista se conserva.
+      if(Room.freshRoster){ Room.roster=[]; Room.freshRoster=false; }
       // La lista solo nace vacía la primera vez: si esto es una
       // reconexión de la señalización, los invitados que ya están NO
       // se borran (antes la lista volvía a 1 y «desaparecían»).
@@ -2365,6 +2499,7 @@ body{background:var(--bg)}
     });
     peer.on("error",function(err){
       if(peer!==Room.peer) return;
+      notePeerError(err);
       var type=(err&&err.type)||"";
       Room.lastError=type||"error de red";
       if(type==="unavailable-id"){
@@ -2403,6 +2538,13 @@ body{background:var(--bg)}
     });
     peer.on("disconnected",function(){
       if(peer!==Room.peer) return;
+      // El registro cayó: mientras no vuelva, los invitados NUEVOS
+      // no encuentran la sala (los que ya están dentro, con su
+      // canal directo abierto, ni se enteran — ese era el patrón
+      // del fallo). Se reconecta ya y el vigía insiste cada 4 s.
+      Room.hostRegistered=false;
+      if(!Room.regDownSince) Room.regDownSince=Date.now();
+      renderDiag();
       try{ peer.reconnect(); }catch(e){}
     });
   }
@@ -2432,6 +2574,7 @@ body{background:var(--bg)}
       conn.on("open",function(){
         if(peer!==Room.peer) return;
         Room.connected=true; Room.joining=false; Room.retries=0; Room.seekRetries=0;
+        Room.connState="canal abierto con el anfitrión, esperando la lista de jugadores"; renderDiag();
         var rb2=$("btnRetryConn"); if(rb2) rb2.style.display="none";
         try{ conn.send({type:"join", payload:{}}); }catch(e){}
         lobbyStatus("Conectado con el anfitrión. Esperando la lista de jugadores…","");
@@ -2472,24 +2615,42 @@ body{background:var(--bg)}
     });
     peer.on("error",function(err){
       if(peer!==Room.peer) return;
+      notePeerError(err);
       var type=(err&&err.type)||"";
       Room.lastError=type||"error de red";
       if(type==="peer-unavailable"){
         if(Room.watchdog){ clearTimeout(Room.watchdog); Room.watchdog=null; }
-        // «No consta» puede ser solo un instante: el anfitrión está
-        // creando la sala o recreándola tras volver de WhatsApp
-        // (su registro tarda unos segundos en reaparecer). Declarar
-        // «sala no encontrada» al primer intento era el otro fallo
-        // del enlace nuevo: se sigue buscando un rato antes de rendirse.
-        Room.seekRetries=(Room.seekRetries||0)+1;
-        if(Room.seekRetries<=6 && Date.now()-(Room.joinedAt||0)<30000){
+        // «No consta» = el id perfect-NNNN no está registrado en el
+        // punto de encuentro EN ESTE INSTANTE. Con el dato nuevo
+        // (todos con la misma versión nueva) la causa no es la
+        // caché: es que el registro del anfitrión cayó — típico al
+        // saltar a WhatsApp a compartir el código, el sistema
+        // congela su página y el broker lo da de baja — y puede
+        // tardar un buen rato en volver cuando regresa al juego.
+        // Quien ya estaba dentro ni se entera (su canal con el
+        // anfitrión ya estaba abierto); quien llega nuevo recibe
+        // esto. Por eso la búsqueda dura 90 s y NO la corta el
+        // contador genérico de reintentos: rendirse a los 30 s
+        // dejaba fuera justo a los nuevos.
+        Room.seekAttempts=(Room.seekAttempts||0)+1;
+        Room.connState="el anfitrión no consta registrado (peer-unavailable)";
+        renderDiag();
+        if(Date.now()-(Room.seekStartedAt||Room.joinedAt||0)<90000){
           Room.joining=false;
-          lobbyStatus("Buscando la sala "+Room.code+"… Si el anfitrión la está creando o reconectando, tarda unos segundos. Reintentando ("+Room.seekRetries+")…","");
+          Room.retries=0; // la búsqueda manda sobre el tope genérico de reintentos
           scheduleRetry();
+          // El aviso se pone DESPUÉS de scheduleRetry a propósito:
+          // él escribe su propio «Conectando… intento N de 5» y
+          // tapaba este, que es el que dice la verdad (búsqueda de
+          // 90 s sin tope de intentos).
+          lobbyStatus("Buscando la sala "+Room.code+" (intento "+Room.seekAttempts+")… El anfitrión aún no consta en el punto de encuentro: si está volviendo de WhatsApp, su sala tarda en reaparecer. Sigo buscando hasta 90 s, no hace falta que toques nada.","");
+          renderDiag();
           return;
         }
         Room.joining=false;
-        lobbyStatus("No se encuentra ninguna sala con el código "+Room.code+". Comprueba que el anfitrión la ha creado ya (su móvil hace de servidor: tiene que tener el juego abierto en la sala) y que el código coincide letra a letra.","err");
+        Room.connState="búsqueda agotada (90 s)";
+        renderDiag();
+        lobbyStatus("No se encuentra ninguna sala con el código "+Room.code+" tras 90 s buscando el id "+hostPeerId(Room.code)+". Último error de PeerJS: "+(Room.lastPeerError||"peer-unavailable")+". Esto significa que el móvil del anfitrión NO está registrado ahora mismo: pídele que vuelva al juego, con la sala abierta en pantalla (sin cambiar de app), y pulsa «Reintentar conexión». El diagnóstico de abajo lo confirma: en su móvil debe decir «Registrado en el punto de encuentro: SÍ».","err");
         var rb3=$("btnRetryConn"); if(rb3) rb3.style.display="";
         return;
       }
@@ -2527,6 +2688,12 @@ body{background:var(--bg)}
   // contigo (tu móvil es el servidor); los invitados se reconectan.
   document.addEventListener("visibilitychange",function(){
     if(document.hidden) return;
+    // v19: el anfitrión, AL VOLVER (el momento exacto en que su
+    // registro pudo caer mientras compartía el código), comprueba
+    // y repara su registro en el acto — antes esta vuelta solo
+    // miraba Room.connected, que seguía en «true» aunque el broker
+    // ya lo hubiera dado de baja, y no hacía nada.
+    if(mode==="online" && Room.amHost && Room.code && !Room.leaving) hostRegCheck(true);
     if(mode!=="online" || !Room.code || Room.connected || Room.joining || Room.leaving) return;
     if(Room.amHost && Room.peer && !Room.peer.destroyed){
       // Anfitrión volviendo (p. ej. de compartir el código): primero
@@ -2545,6 +2712,10 @@ body{background:var(--bg)}
     Room.retries=0;
     joinRoom(Room.code, Room.amHost, true);
   });
+  // v19: al recuperar el foco o la red, el anfitrión re-comprueba
+  // su registro al momento (el vigía de 4 s es la red de fondo).
+  window.addEventListener("focus",function(){ hostRegCheck(true); });
+  window.addEventListener("online",function(){ hostRegCheck(true); });
 
   // ---------- MODE TABS ----------
   function setModeTab(m){
@@ -2650,6 +2821,10 @@ body{background:var(--bg)}
     if(!Room.code) return;
     this.style.display="none";
     Room.retries=0; Room.lastStatus="";
+    // Reintento MANUAL: la ventana de búsqueda de 90 s vuelve a
+    // cero (con isRetry se conserva, y sin esto el primer
+    // «peer-unavailable» tras agotar la búsqueda rendiría al acto).
+    Room.seekStartedAt=Date.now(); Room.seekAttempts=0; Room.connState="buscando al anfitrión…";
     lobbyStatus("Reconectando con la sala "+Room.code+"…","");
     joinRoom(Room.code, Room.amHost, true);
   });
