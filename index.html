@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8" />
-<!-- perfect-build:202611082030 -->
+<!-- perfect-build:202611082045 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
@@ -62,7 +62,7 @@
    Si la comprobación falla (sin red, fetch bloqueado), no se
    toca nada y el juego arranca igual que siempre.
    ============================================================ */
-window.PERFECT_VERSION="202611082030";
+window.PERFECT_VERSION="202611082045";
 (function(){
   "use strict";
   var VERSION=window.PERFECT_VERSION;
@@ -1988,12 +1988,30 @@ body{background:var(--bg)}
   //  propio punto de encuentro) a anfitrión e invitados: sin TURN,
   //  los móviles tras el NAT de su operadora a menudo no conseguían
   //  abrir el canal directo con el anfitrión.
+  // v21 (dato del invitado, 2026-11-08): el anfitrión SÍ consta
+  // registrado (captura: «Registrado: SÍ», jugador de ayer dentro,
+  // 2 de 8) y aun así el invitado NUEVO agota sus 5 reintentos sin
+  // abrir nunca el canal. El cuello de botella pasa a ser el canal
+  // directo (ICE): sin un repetidor (TURN) que su red acepte, un
+  // móvil tras el NAT simétrico de su operadora no consigue abrir
+  // el WebRTC contra el anfitrión aunque la señalización vaya bien
+  // — y quien ya jugó (misma wifi o una red más permisiva) ni se
+  // entera. Hasta ahora solo había el TURN de PeerJS por el 3478.
+  // Se añaden los repetidores públicos de OpenRelay (Metered) por
+  // 80 y por 443/TCP+TLS — el 443 es el puerto que casi ninguna
+  // red móvil bloquea — y más STUN, para anfitrión e invitados.
   function newPeer(id){
     var opts={ debug:0, config:{ iceServers:[
       { urls:"stun:stun.l.google.com:19302" },
       { urls:"stun:stun1.l.google.com:19302" },
+      { urls:"stun:stun.cloudflare.com:3478" },
+      { urls:"stun:openrelay.metered.ca:80" },
       { urls:"turn:0.peerjs.com:3478", username:"peerjs", credential:"peerjsp" },
-      { urls:"turn:0.peerjs.com:3478?transport=tcp", username:"peerjs", credential:"peerjsp" }
+      { urls:"turn:0.peerjs.com:3478?transport=tcp", username:"peerjs", credential:"peerjsp" },
+      { urls:"turn:openrelay.metered.ca:80", username:"openrelayproject", credential:"openrelayproject" },
+      { urls:"turn:openrelay.metered.ca:443", username:"openrelayproject", credential:"openrelayproject" },
+      { urls:"turn:openrelay.metered.ca:443?transport=tcp", username:"openrelayproject", credential:"openrelayproject" },
+      { urls:"turns:openrelay.metered.ca:443?transport=tcp", username:"openrelayproject", credential:"openrelayproject" }
     ]}};
     return id ? new window.Peer(id, opts) : new window.Peer(opts);
   }
@@ -2052,6 +2070,10 @@ body{background:var(--bg)}
     // v20: control de la recuperación del registro (ver más abajo)
     lastReconnectAt:0, regAttempts:0, peerRetryAt:0,
     seekAttempts:0, seekStartedAt:0, lastPeerError:"", lastPeerErrorAt:0, connState:"—",
+    // v21: historial de intentos de unión (error exacto + hora de
+    // cada intento, visible en el diagnóstico del invitado y en el
+    // del anfitrión) y último estado ICE del canal directo.
+    attemptLog:[], iceState:"—", joinSeen:0,
     // Enviar un evento de partida: el anfitrión lo reparte a todos los
     // invitados; un invitado se lo manda al anfitrión, que lo aplica
     // y lo retransmite a los demás.
@@ -2160,6 +2182,19 @@ body{background:var(--bg)}
     Room.lastPeerErrorAt=Date.now();
     renderDiag();
   }
+  // v21: cada intento de unión deja UNA línea con su hora y su
+  // resultado exacto (error de PeerJS, timeout o estado ICE) en el
+  // historial visible del diagnóstico. Sin esto, el invitado nuevo
+  // solo veía «Reconectando…» 5 veces y un «no se ha encontrado»
+  // genérico: imposible saber si fallaba la búsqueda del anfitrión
+  // (peer-unavailable), la apertura del propio registro, o el
+  // canal directo (ICE/TURN).
+  function logAttempt(text){
+    if(!Room.attemptLog) Room.attemptLog=[];
+    Room.attemptLog.push(fmtClock(Date.now())+" — "+text);
+    if(Room.attemptLog.length>9) Room.attemptLog.splice(0,Room.attemptLog.length-9);
+    renderDiag();
+  }
   function renderDiag(){
     var el=$("lobbyDiag"); if(!el) return;
     if(!Room.code){ el.style.display="none"; el.textContent=""; return; }
@@ -2172,14 +2207,20 @@ body{background:var(--bg)}
     if(Room.amHost){
       lines.push("Registrado en el punto de encuentro: "+(Room.hostRegistered?"SÍ — los nuevos pueden encontrarte":"NO — los nuevos NO pueden encontrarte ahora mismo; el vigía lo está reintentando"));
       if(!Room.hostRegistered && Room.regDownSince) lines.push("Sin registro desde hace "+Math.round((Date.now()-Room.regDownSince)/1000)+" s · re-registros intentados: "+(Room.regAttempts||0));
+      lines.push("Intentos de entrada que han llegado a tu móvil: "+(Room.joinSeen||0));
     } else {
       lines.push("Estado de tu unión: "+Room.connState);
+      lines.push("Canal directo con el anfitrión (ICE): "+(Room.iceState||"—"));
       if(Room.seekStartedAt && !Room.connected){
         lines.push("Buscando la sala desde hace "+Math.round((Date.now()-Room.seekStartedAt)/1000)+" s · intentos: "+Room.seekAttempts);
       }
     }
     lines.push("Jugadores en la lista: "+Room.players+" de "+MAX_PLAYERS);
     lines.push("Último error de PeerJS: "+(Room.lastPeerError||"ninguno")+(Room.lastPeerErrorAt?" ("+fmtClock(Room.lastPeerErrorAt)+")":""));
+    if(Room.attemptLog && Room.attemptLog.length){
+      lines.push("Historial de intentos:");
+      Room.attemptLog.slice(-6).forEach(function(entry){ lines.push("· "+entry); });
+    }
     el.textContent=lines.join("\n");
   }
   // Vigía de registro del anfitrión: mantiene vivo el alta en el
@@ -2241,26 +2282,55 @@ body{background:var(--bg)}
   // Reintento de conexión: si la red móvil corta el contacto inicial,
   // se vuelve a intentar solo unas veces recreando la conexión.
   var MAX_RETRIES=4;
+  // v21: ventana de búsqueda del INVITADO. El dato nuevo: el
+  // invitado veía «Reconectando…» hasta 5 veces y luego «no se ha
+  // encontrado» — era ESTE contador (MAX_RETRIES) rindiéndose por
+  // número de intentos, diera el error que diera, aunque el
+  // anfitrión constara registrado y con gente dentro. Un invitado
+  // no se rinde por conteo: se rinde por TIEMPO. Cada reintento
+  // recrea su Peer (se vuelve a registrar en el punto de
+  // encuentro) y vuelve a pedir el canal, con esperas crecientes,
+  // durante 4 minutos — lo que tarda un anfitrión en volver de
+  // WhatsApp o un repetidor TURN en abrir paso — y cada intento
+  // queda anotado en el historial del diagnóstico con su error
+  // exacto y su hora. El anfitrión conserva el tope de siempre.
+  var GUEST_SEEK_MS=240000;
   function scheduleRetry(){
     if(Room.leaving||!Room.code||Room.retryTimer) return;
     Room.retries++;
-    if(Room.retries>MAX_RETRIES){
+    var guestSeeking=!Room.amHost;
+    var seekElapsed=Date.now()-(Room.seekStartedAt||Room.joinedAt||Date.now());
+    if(guestSeeking && seekElapsed>=GUEST_SEEK_MS){
+      Room.joining=false;
+      var jcFillG=$("joinCode"); if(jcFillG && Room.code) jcFillG.value=Room.code; // el código queda rellenado para reintentar a mano
+      logAttempt("búsqueda agotada tras 4 min · último aviso: "+(Room.lastError||"sin respuesta")+" · ICE: "+(Room.iceState||"—"));
+      lobbyStatus("No se ha podido entrar en la sala "+Room.code+" tras 4 minutos probando (último aviso: "+(Room.lastError||"sin respuesta")+"; canal directo ICE: "+(Room.iceState||"—")+"). El historial de intentos del diagnóstico de abajo dice el error exacto de cada intento: si pone «peer-unavailable», el anfitrión no constaba en ese momento; si pone que el canal no se abrió o ICE «failed», es la red de tu móvil contra la suya (prueba cambiando entre wifi y datos). El código "+Room.code+" queda escrito en el campo de unirse y puedes pulsar «Reintentar conexión».","err");
+      var rbG=$("btnRetryConn"); if(rbG) rbG.style.display="";
+      renderDiag();
+      return;
+    }
+    if(!guestSeeking && Room.retries>MAX_RETRIES){
       Room.joining=false;
       var jcFill=$("joinCode"); if(jcFill && Room.code) jcFill.value=Room.code; // el código queda rellenado para reintentar a mano
       if(Room.lastError==="peer-unavailable"){
-        lobbyStatus("No se encuentra ninguna sala con el código "+Room.code+". Comprueba que el anfitrión la ha creado ya (su móvil hace de servidor: tiene que tener el juego abierto en la sala) y que el código coincide letra a letra.","err");
+        lobbyStatus("No se encuentra ninguna sala con el código "+Room.code+". Comprueba que el anfitrión la ha creado ya (su móvil hace de servidor: tiene que tener el juego abierto en la sala) y que los 4 números coinciden.","err");
       } else {
         lobbyStatus("No se ha podido conectar tras "+MAX_RETRIES+" reintentos (último aviso: "+(Room.lastError||"sin respuesta")+"). Revisa tu conexión y prueba con «Reintentar conexión»; si abriste el juego desde dentro de WhatsApp, ábrelo en Safari/Chrome.","err");
       }
       var rb=$("btnRetryConn"); if(rb) rb.style.display="";
       return;
     }
-    lobbyStatus("Conectando… intento "+(Room.retries+1)+" de "+(MAX_RETRIES+1)+".","");
+    if(guestSeeking){
+      lobbyStatus("Buscando la sala "+Room.code+"… intento "+(Room.seekAttempts||Room.retries)+(Room.lastError? " · último aviso: "+Room.lastError : "")+". Sigo probando solo, no hace falta que toques nada.","");
+    } else {
+      lobbyStatus("Conectando… intento "+(Room.retries+1)+" de "+(MAX_RETRIES+1)+".","");
+    }
     var code=Room.code, host=Room.amHost;
+    var delay= guestSeeking ? Math.min(2000+1500*Room.retries, 8000) : Math.min(1500*Room.retries, 6000);
     Room.retryTimer=setTimeout(function(){
       Room.retryTimer=null;
       joinRoom(code, host, true); // isRetry: joinRoom conserva el nº de partida
-    }, Math.min(1500*Room.retries, 6000));
+    }, delay);
   }
   // Vestíbulo optimista: nada más pulsar «Crear sala» / «Unirme», el
   // jugador se ve a sí mismo en la lista («Tú · ANFITRIÓN — 1 de 8»)
@@ -2414,6 +2484,20 @@ body{background:var(--bg)}
   }
   function hostOnConnection(conn){
     Room.conns[conn.peer]=conn;
+    // v21: el anfitrión también anota cada intento de entrada que
+    // le LLEGA (la señalización sí le trajo al invitado) y si su
+    // canal directo se cae antes de entrar en la lista: así las
+    // dos pantallas juntas distinguen «el invitado nunca llegó a
+    // pedirme paso» (búsqueda/registro) de «llegó, pero el canal
+    // no se abrió» (ICE/TURN de su red contra la mía).
+    Room.joinSeen=(Room.joinSeen||0)+1;
+    logAttempt("intento de entrada nº "+Room.joinSeen+": un invitado está abriendo canal con tu móvil…");
+    if(conn.on) conn.on("iceStateChanged",function(state){
+      Room.iceState=state||"—"; renderDiag();
+      if((state==="failed"||state==="closed") && !Room.roster.some(function(e){ return e.id===conn.peer; })){
+        logAttempt("un invitado NO consiguió abrir el canal (ICE: "+state+") — llegó a tu móvil pero su red no abrió el directo");
+      }
+    });
     // Los mensajes se escuchan desde que la conexión LLEGA, no desde
     // que abre: así el «join» del invitado no se pierde si su canal
     // se abre un instante antes de que el anfitrión lo atienda.
@@ -2508,7 +2592,7 @@ body{background:var(--bg)}
       Room.playersMap={}; Room.leaderName=null; Room.winnerId=null; Room.roster=[];
       Room.idRetries=0; Room.seekRetries=0; Room.acks={};
       // El reloj de búsqueda SOLO nace en la unión inicial: en los
-      // reintentos se conserva, o la ventana de 90 s nunca se cierra
+      // reintentos se conserva, o la ventana de búsqueda nunca se cierra
       // y las cuentas del diagnóstico salen mal.
       if(!isRetry){ Room.joinedAt=Date.now(); Room.seekStartedAt=Date.now(); Room.seekAttempts=0; Room.connState= asHost ? "registrando tu sala…" : "buscando al anfitrión…"; }
       lobbyShow();
@@ -2633,6 +2717,9 @@ body{background:var(--bg)}
     try{ peer=newPeer(); }
     catch(e){ Room.joining=false; scheduleRetry(); return; }
     Room.peer=peer;
+    Room.iceState="negociando…";
+    Room.seekAttempts=(Room.seekAttempts||0)+1;
+    logAttempt("intento "+Room.seekAttempts+": registrándome en el punto de encuentro para buscar "+hostPeerId(code)+"…");
     // v20: si la apertura del propio Peer del invitado se cuelga
     // (sin «open» ni error, red a medio cambiar), antes no había
     // ningún temporizador armado todavía — el watchdog nace dentro
@@ -2641,7 +2728,8 @@ body{background:var(--bg)}
     var guestOpened=false;
     setTimeout(function(){
       if(peer!==Room.peer || guestOpened || Room.leaving) return;
-      Room.lastError="el punto de encuentro no respondió";
+      Room.lastError="mi registro en el punto de encuentro no llegó a abrirse";
+      logAttempt("mi propio registro no se abrió en 12 s (la señalización no respondió)");
       Room.joining=false;
       scheduleRetry();
     },12000);
@@ -2649,6 +2737,7 @@ body{background:var(--bg)}
       if(peer!==Room.peer) return;
       guestOpened=true;
       Room.myId=id;
+      logAttempt("señalización OK: pidiendo el canal directo a "+hostPeerId(code)+"…");
       var conn;
       try{ conn=peer.connect(hostPeerId(code),{reliable:true}); }
       catch(e){ Room.joining=false; scheduleRetry(); return; }
@@ -2660,14 +2749,21 @@ body{background:var(--bg)}
       Room.watchdog=setTimeout(function(){
         Room.watchdog=null;
         if(!Room.code||Room.amHost||Room.connected) return;
-        Room.lastError="la sala no respondió";
+        // v21: 15 s (antes 10) para dar tiempo a un repetidor TURN
+        // por TCP, y el aviso distingue la causa: el anfitrión SÍ
+        // consta (no fue peer-unavailable) pero el canal directo
+        // no llegó a abrirse — el clásico bloqueo ICE/NAT.
+        Room.lastError="el canal directo con el anfitrión no se abrió";
+        logAttempt("el canal directo no se abrió en 15 s (ICE: "+(Room.iceState||"—")+") — el anfitrión consta, pero la red no abrió el directo");
         Room.joining=false;
         scheduleRetry();
-      },10000);
+      },15000);
       conn.on("open",function(){
         if(peer!==Room.peer) return;
         Room.connected=true; Room.joining=false; Room.retries=0; Room.seekRetries=0;
+        Room.seekStartedAt=Date.now(); // canal abierto: si luego se corta, la ventana de búsqueda vuelve a ser entera
         Room.connState="canal abierto con el anfitrión, esperando la lista de jugadores"; renderDiag();
+        logAttempt("canal directo ABIERTO con el anfitrión; esperando la lista de jugadores");
         var rb2=$("btnRetryConn"); if(rb2) rb2.style.display="none";
         try{ conn.send({type:"join", payload:{}}); }catch(e){}
         lobbyStatus("Conectado con el anfitrión. Esperando la lista de jugadores…","");
@@ -2690,10 +2786,22 @@ body{background:var(--bg)}
           Room.rosterWait=null;
           if(!Room.code||Room.amHost||Room.roster.length) return;
           Room.lastError="conectó con el anfitrión pero la sala no respondió";
+          logAttempt("el canal abrió pero la lista de jugadores no llegó en 12 s");
           scheduleRetry();
         },12000);
       });
       conn.on("data",function(msg){ if(peer===Room.peer) guestOnData(msg); });
+      // v21: el estado ICE del canal queda visible en el
+      // diagnóstico y anotado si se cae antes de entrar: es la
+      // diferencia entre «no encuentra la sala» y «la encuentra
+      // pero su red no abre el directo».
+      if(conn.on) conn.on("iceStateChanged",function(state){
+        if(peer!==Room.peer) return;
+        Room.iceState=state||"—"; renderDiag();
+        if((state==="failed"||state==="disconnected"||state==="closed") && !Room.connected){
+          logAttempt("el canal directo se cayó antes de entrar (ICE: "+state+")");
+        }
+      });
       conn.on("close",function(){
         if(peer!==Room.peer||Room.leaving) return;
         Room.connected=false;
@@ -2703,7 +2811,10 @@ body{background:var(--bg)}
       });
       if(conn.on) conn.on("error",function(){
         if(peer!==Room.peer||Room.leaving) return;
-        Room.connected=false; scheduleRetry();
+        Room.connected=false; Room.joining=false;
+        Room.lastError="error en el canal con el anfitrión";
+        logAttempt("error en el canal con el anfitrión (ICE: "+(Room.iceState||"—")+")");
+        scheduleRetry();
       });
     });
     peer.on("error",function(err){
@@ -2722,29 +2833,30 @@ body{background:var(--bg)}
         // tardar un buen rato en volver cuando regresa al juego.
         // Quien ya estaba dentro ni se entera (su canal con el
         // anfitrión ya estaba abierto); quien llega nuevo recibe
-        // esto. Por eso la búsqueda dura 90 s y NO la corta el
-        // contador genérico de reintentos: rendirse a los 30 s
-        // dejaba fuera justo a los nuevos.
-        Room.seekAttempts=(Room.seekAttempts||0)+1;
+        // esto. Por eso la búsqueda dura 4 minutos (v21:
+        // GUEST_SEEK_MS) y NO la corta ningún contador de
+        // intentos: rendirse a los 5 intentos dejaba fuera justo
+        // a los nuevos, diera el error que diera.
         Room.connState="el anfitrión no consta registrado (peer-unavailable)";
+        logAttempt("peer-unavailable: "+hostPeerId(code)+" no consta en el punto de encuentro en este intento");
         renderDiag();
-        if(Date.now()-(Room.seekStartedAt||Room.joinedAt||0)<90000){
+        if(Date.now()-(Room.seekStartedAt||Room.joinedAt||0)<GUEST_SEEK_MS){
           Room.joining=false;
           Room.retries=0; // la búsqueda manda sobre el tope genérico de reintentos
           scheduleRetry();
           // El aviso se pone DESPUÉS de scheduleRetry a propósito:
-          // él escribe su propio «Conectando… intento N de 5» y
-          // tapaba este, que es el que dice la verdad (búsqueda de
-          // 90 s sin tope de intentos).
-          lobbyStatus("Buscando la sala "+Room.code+" (intento "+Room.seekAttempts+")… El anfitrión aún no consta en el punto de encuentro: si está volviendo de WhatsApp, su sala tarda en reaparecer. Sigo buscando hasta 90 s, no hace falta que toques nada.","");
+          // él escribe su propio aviso de búsqueda y tapaba este,
+          // que es el que dice la causa (peer-unavailable) y la
+          // ventana real de 4 minutos sin tope de intentos.
+          lobbyStatus("Buscando la sala "+Room.code+" (intento "+Room.seekAttempts+")… El anfitrión aún no consta en el punto de encuentro: si está volviendo de WhatsApp, su sala tarda en reaparecer. Sigo buscando hasta 4 minutos, re-registrándome en cada intento; no hace falta que toques nada.","");
           renderDiag();
           return;
         }
         Room.joining=false;
-        Room.connState="búsqueda agotada (90 s)";
+        Room.connState="búsqueda agotada (4 min, siempre peer-unavailable)";
         var jcFill2=$("joinCode"); if(jcFill2) jcFill2.value=Room.code; // código rellenado en el campo de unirse para reintentarlo a mano
         renderDiag();
-        lobbyStatus("No se encuentra ninguna sala con el código "+Room.code+" tras 90 s buscando el id "+hostPeerId(Room.code)+". Último error de PeerJS: "+(Room.lastPeerError||"peer-unavailable")+". Esto significa que el móvil del anfitrión NO está registrado ahora mismo: pídele que vuelva al juego, con la sala abierta en pantalla (sin cambiar de app), y pulsa «Reintentar conexión». El código "+Room.code+" queda ya escrito en el campo de unirse, por si quieres reintentarlo a mano. El diagnóstico de abajo lo confirma: en su móvil debe decir «Registrado en el punto de encuentro: SÍ».","err");
+        lobbyStatus("No se encuentra ninguna sala con el código "+Room.code+" tras 4 minutos buscando el id "+hostPeerId(Room.code)+". Último error de PeerJS: "+(Room.lastPeerError||"peer-unavailable")+" — en TODOS los intentos del historial de abajo el anfitrión no constaba. Esto significa que el móvil del anfitrión NO está registrado ahora mismo: pídele que vuelva al juego, con la sala abierta en pantalla (sin cambiar de app), y pulsa «Reintentar conexión». El código "+Room.code+" queda ya escrito en el campo de unirse, por si quieres reintentarlo a mano. El diagnóstico de abajo lo confirma: en su móvil debe decir «Registrado en el punto de encuentro: SÍ».","err");
         var rb3=$("btnRetryConn"); if(rb3) rb3.style.display="";
         return;
       }
@@ -2915,7 +3027,7 @@ body{background:var(--bg)}
     if(!Room.code) return;
     this.style.display="none";
     Room.retries=0; Room.lastStatus="";
-    // Reintento MANUAL: la ventana de búsqueda de 90 s vuelve a
+    // Reintento MANUAL: la ventana de búsqueda (4 min) vuelve a
     // cero (con isRetry se conserva, y sin esto el primer
     // «peer-unavailable» tras agotar la búsqueda rendiría al acto).
     Room.seekStartedAt=Date.now(); Room.seekAttempts=0; Room.connState="buscando al anfitrión…";
@@ -2940,7 +3052,7 @@ body{background:var(--bg)}
   // usa nombres propios (cada uno entra como «Jugador N» en la
   // lista), así que no hay nombre que pedir: la entrada es directa.
   // Si la sala no se encuentra, el aviso de error de la búsqueda
-  // (90 s) lo dice claro en el vestíbulo y el código queda escrito
+  // (4 min) lo dice claro en el vestíbulo y el código queda escrito
   // en el campo de unirse para reintentarlo a mano.
   var inviteCode=null, inviteRaw="";
   try{
